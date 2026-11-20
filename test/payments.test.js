@@ -7,6 +7,7 @@ const { createPayments } = require('../api/_lib/payments');
 const { createLedger, HORIZON } = require('../api/_lib/stellar');
 const { MemoryStore } = require('../api/_lib/store');
 const { handler } = require('../api/_lib/http');
+const { HttpError } = require('../api/_lib/errors');
 
 // Synthetic fixture identities only. No real access token, API key, or seed is used.
 const user = () => ({ uid: 'fixture-user', wallet_address: 'fixture-wallet', credentials: { scopes: ['wallet_address'] } });
@@ -290,8 +291,9 @@ test('payout diagnostics logs one line with the recipient source and no address'
   console.log = line => lines.push(line);
   try {
     await f.service().payout({ ...payout, purchasePaymentId: 'fixture-payment' });
-    assert.equal(lines.length, 1);
-    assert.deepEqual(JSON.parse(lines[0]), { event: 'payout_recipient', source: 'purchase', purchaseStage: null });
+    const recipients = lines.filter(line => JSON.parse(line).event === 'payout_recipient');
+    assert.equal(recipients.length, 1);
+    assert.deepEqual(JSON.parse(recipients[0]), { event: 'payout_recipient', source: 'purchase', purchaseStage: null });
     assert.equal(lines[0].includes('fixture-wallet'), false);
     lines.length = 0;
     const noPaths = fixture();
@@ -417,3 +419,106 @@ test('all four Vercel exports handle preflight without credentials or SDK', asyn
     assert.equal((await call(route, { method: 'OPTIONS' })).statusCode, 204);
   }
 });
+
+async function captureLogs(fn) {
+  const lines = [];
+  const originalLog = console.log;
+  console.log = line => lines.push(line);
+  try { await fn(lines); }
+  finally { console.log = originalLog; }
+}
+
+const stageLines = lines => lines.map(line => JSON.parse(line)).filter(line => line.event === 'payout_stage');
+const successfulStages = names => names.map(stage => ({ event: 'payout_stage', stage, ok: true }));
+
+test('payout logs each successful stage once in order', async () => {
+  const f = fixture();
+  await captureLogs(async lines => {
+    await f.service().payout(payout);
+    assert.deepEqual(stageLines(lines), successfulStages(['create', 'fetch', 'prepare', 'submit', 'complete']));
+    await f.service().payout(payout);
+    assert.equal(stageLines(lines).length, 5);
+  });
+});
+
+for (const error of [new HttpError(503, 'transaction_build_failed'), new Error('private failure')]) {
+  test(`payout logs failed prepare with ${error.code || 'internal_error'} and rethrows the same error`, async () => {
+    const f = fixture();
+    f.ledger.prepare = async () => { throw error; };
+    await captureLogs(async lines => {
+      await assert.rejects(f.service().payout(payout), actual => actual === error);
+      assert.deepEqual(stageLines(lines), [
+        ...successfulStages(['create', 'fetch']),
+        { event: 'payout_stage', stage: 'prepare', ok: false, code: error.code || 'internal_error' },
+      ]);
+    });
+  });
+}
+
+test('payout logs completion failure and reconciliation without rebuilding', async () => {
+  const f = fixture();
+  f.crash = 'after_complete';
+  await captureLogs(async lines => {
+    await assert.rejects(f.service().payout(payout), { code: 'pi_unavailable' });
+    assert.deepEqual(stageLines(lines), [
+      ...successfulStages(['create', 'fetch', 'prepare', 'submit']),
+      { event: 'payout_stage', stage: 'complete', ok: false, code: 'pi_unavailable' },
+    ]);
+    lines.length = 0;
+    await f.service().payout(payout);
+    assert.deepEqual(stageLines(lines), successfulStages(['fetch', 'complete']));
+  });
+});
+
+test('payout logs only fetch and complete for a Pi linked transaction', async () => {
+  const f = fixture();
+  f.current = payment({ amount: 0.5, metadata: { product: 'test_payout' }, direction: 'app_to_user',
+    status: { developer_approved: true }, transaction: { txid: 'linked-tx', verified: true } });
+  await f.store.set('payout:fixture-user', { status: 'created', paymentId: 'fixture-payment' });
+  await captureLogs(async lines => {
+    await f.service().payout(payout);
+    assert.deepEqual(stageLines(lines), successfulStages(['fetch', 'complete']));
+  });
+});
+
+for (const scenario of ['valid', 'wrong_wallet', 'malformed', 'missing', 'padded', 'empty']) {
+  test(`real ledger prepare logs safe keypair booleans for ${scenario} seed`, async () => {
+    const { Keypair } = require('@stellar/stellar-sdk');
+    const a = Keypair.random(), b = Keypair.random();
+    const secret = a.secret();
+    const seed = { valid: secret, wrong_wallet: b.secret(), malformed: 'S' + '!'.repeat(55),
+      missing: undefined, padded: '  ' + secret + '\n', empty: ' \n' }[scenario];
+    const valid = !['malformed', 'missing', 'empty'].includes(scenario);
+    const matches = valid && scenario !== 'wrong_wallet';
+    const code = { wrong_wallet: 'app_wallet_mismatch', malformed: 'transaction_build_failed',
+      missing: 'server_not_configured', empty: 'server_not_configured' }[scenario];
+    const requests = [];
+    const ledger = createLedger({
+      env: seed === undefined ? {} : { PI_WALLET_SEED: seed },
+      fetchImpl: async url => {
+        requests.push(url);
+        if (url === HORIZON + '/accounts/' + a.publicKey()) return json({ sequence: '1' });
+        if (url === HORIZON + '/fee_stats') return json({ last_ledger_base_fee: '100000' });
+        throw new Error('Unexpected fixture URL');
+      },
+    });
+    await captureLogs(async lines => {
+      const preparing = ledger.prepare({ from_address: a.publicKey(), to_address: b.publicKey(), identifier: 'fixture-payment' });
+      if (code) await assert.rejects(preparing, { code, status: scenario === 'wrong_wallet' ? 409 : 503 });
+      else {
+        const prepared = await preparing;
+        assert.equal(typeof prepared.xdr, 'string');
+        assert.match(prepared.txid, /^[a-f0-9]{64}$/);
+      }
+      assert.deepEqual(lines.map(line => JSON.parse(line)), [
+        { event: 'payout_stage', stage: 'keypair', seedValid: valid, seedMatchesWallet: matches },
+      ]);
+      for (const line of lines) {
+        for (const sensitive of [seed, secret, b.secret(), a.publicKey(), b.publicKey()].filter(Boolean)) {
+          assert.equal(line.includes(sensitive), false);
+        }
+      }
+      assert.equal(requests.length, code ? 0 : 2);
+    });
+  });
+}

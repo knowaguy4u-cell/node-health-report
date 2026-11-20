@@ -19,10 +19,24 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
   }
   return {
     async prepare(payment) {
-      if (!env.PI_WALLET_SEED) throw new HttpError(503, 'server_not_configured');
+      const seed = typeof env.PI_WALLET_SEED === 'string' ? env.PI_WALLET_SEED.trim() : env.PI_WALLET_SEED;
+      const logKeypair = (seedValid, seedMatchesWallet) => console.log(JSON.stringify({
+        event: 'payout_stage', stage: 'keypair', seedValid, seedMatchesWallet,
+      }));
+      if (!seed) {
+        logKeypair(false, false);
+        throw new HttpError(503, 'server_not_configured');
+      }
       try {
-        const S = require('@stellar/stellar-sdk');
-        const signer = S.Keypair.fromSecret(env.PI_WALLET_SEED);
+        let S, signer;
+        try {
+          S = require('@stellar/stellar-sdk');
+          signer = S.Keypair.fromSecret(seed);
+        } catch (error) {
+          logKeypair(false, false);
+          throw error;
+        }
+        logKeypair(true, signer.publicKey() === payment.from_address);
         if (payment.from_address !== signer.publicKey()) throw new HttpError(409, 'app_wallet_mismatch');
         const [account, fees] = await Promise.all([
           json(`/accounts/${encodeURIComponent(signer.publicKey())}`), json('/fee_stats'),

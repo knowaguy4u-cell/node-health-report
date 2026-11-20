@@ -157,64 +157,86 @@ function createPayments({ pi, store, ledger }) {
           state = { ...state, ...changes };
           await store.set(key, state);
         };
+        const stage = async (name, fn) => {
+          try {
+            const value = await fn();
+            console.log(JSON.stringify({ event: 'payout_stage', stage: name, ok: true }));
+            return value;
+          } catch (error) {
+            console.log(JSON.stringify({ event: 'payout_stage', stage: name, ok: false,
+              code: error instanceof HttpError ? error.code : 'internal_error' }));
+            throw error;
+          }
+        };
         const result = () => ({ ok: true, status: 'completed', paymentId: state.paymentId });
         if (state?.status === 'completed') return result();
         try {
           if (!state?.paymentId) {
-            const ongoing = await pi.getIncompleteServerPayments();
-            const matching = ongoing.find(p => p.user_uid === user.uid && p.metadata?.product === PAYOUT_PRODUCT);
-            if (matching) {
-              validate(matching, matching.identifier, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
-              await save({ status: 'created', paymentId: matching.identifier });
-            } else {
-              if (ongoing.length) throw new HttpError(409, 'payout_in_flight');
-              // A previous create request could have succeeded before the
-              // response was saved. Never blindly create again in that window.
-              if (state) throw new HttpError(409, 'payout_reconciliation_required');
-              await save({ status: 'creating' });
-              const created = await pi.createA2UPayment({
-                uid: user.uid, amount: PAYOUT, memo: 'Node Health Report — test payout',
-                metadata: { product: PAYOUT_PRODUCT },
-              });
-              requireString(created?.identifier, 'paymentId');
-              await save({ status: 'created', paymentId: created.identifier });
-            }
+            await stage('create', async () => {
+              const ongoing = await pi.getIncompleteServerPayments();
+              const matching = ongoing.find(p => p.user_uid === user.uid && p.metadata?.product === PAYOUT_PRODUCT);
+              if (matching) {
+                validate(matching, matching.identifier, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
+                await save({ status: 'created', paymentId: matching.identifier });
+              } else {
+                if (ongoing.length) throw new HttpError(409, 'payout_in_flight');
+                // A previous create request could have succeeded before the
+                // response was saved. Never blindly create again in that window.
+                if (state) throw new HttpError(409, 'payout_reconciliation_required');
+                await save({ status: 'creating' });
+                const created = await pi.createA2UPayment({
+                  uid: user.uid, amount: PAYOUT, memo: 'Node Health Report — test payout',
+                  metadata: { product: PAYOUT_PRODUCT },
+                });
+                requireString(created?.identifier, 'paymentId');
+                await save({ status: 'created', paymentId: created.identifier });
+              }
+            });
           }
-          const payment = await pi.getPayment(state.paymentId);
-          validate(payment, state.paymentId, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
-          // Pi's current payment destination is authoritative (wallets may
-          // change). No browser-supplied address ever enters the transaction.
-          if (!payment.to_address || !payment.from_address) throw new HttpError(502, 'invalid_pi_response');
-          if (payment.to_address !== recipient) throw new HttpError(403, 'payout_recipient_mismatch');
+          const payment = await stage('fetch', async () => {
+            const payment = await pi.getPayment(state.paymentId);
+            validate(payment, state.paymentId, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
+            // Pi's current payment destination is authoritative (wallets may
+            // change). No browser-supplied address ever enters the transaction.
+            if (!payment.to_address || !payment.from_address) throw new HttpError(502, 'invalid_pi_response');
+            if (payment.to_address !== recipient) throw new HttpError(403, 'payout_recipient_mismatch');
+            return payment;
+          });
           if (payment.status?.developer_completed) {
-            if (!payment.status.transaction_verified || !payment.transaction?.verified) throw new HttpError(502, 'payment_not_verified');
-            await save({ status: 'completed', txid: payment.transaction.txid, xdr: null });
-            return result();
+            return await stage('complete', async () => {
+              if (!payment.status.transaction_verified || !payment.transaction?.verified) throw new HttpError(502, 'payment_not_verified');
+              await save({ status: 'completed', txid: payment.transaction.txid, xdr: null });
+              return result();
+            });
           }
           if (payment.transaction?.txid) {
             if (state.txid && payment.transaction.txid !== state.txid) throw new HttpError(409, 'txid_mismatch');
             await save({ status: 'submitted', txid: payment.transaction.txid });
           } else {
             if (!state.txid) {
-              const prepared = await ledger.prepare(payment);
+              const prepared = await stage('prepare', () => ledger.prepare(payment));
               // Write-ahead: save hash AND signed envelope BEFORE any submission.
               await save({ status: 'prepared', ...prepared });
             }
-            const existing = await ledger.lookup(state.txid);
-            if (!existing) {
-              if (!state.xdr) throw new HttpError(409, 'payout_reconciliation_required');
-              await ledger.submit(state);
+            await stage('submit', async () => {
+              const existing = await ledger.lookup(state.txid);
+              if (!existing) {
+                if (!state.xdr) throw new HttpError(409, 'payout_reconciliation_required');
+                await ledger.submit(state);
+              }
+              await save({ status: 'submitted' });
+            });
+          }
+          return await stage('complete', async () => {
+            const completed = await pi.completePayment(state.paymentId, state.txid);
+            validate(completed, state.paymentId, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
+            if (!completed.status?.developer_completed || !completed.status?.transaction_verified ||
+                !completed.transaction?.verified || completed.transaction.txid !== state.txid) {
+              throw new HttpError(502, 'payment_not_verified');
             }
-            await save({ status: 'submitted' });
-          }
-          const completed = await pi.completePayment(state.paymentId, state.txid);
-          validate(completed, state.paymentId, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
-          if (!completed.status?.developer_completed || !completed.status?.transaction_verified ||
-              !completed.transaction?.verified || completed.transaction.txid !== state.txid) {
-            throw new HttpError(502, 'payment_not_verified');
-          }
-          await save({ status: 'completed', xdr: null });
-          return result();
+            await save({ status: 'completed', xdr: null });
+            return result();
+          });
         } catch (error) {
           if (state && state.status !== 'completed') {
             // Preserve paymentId, hash and envelope even when the result of an
