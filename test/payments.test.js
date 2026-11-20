@@ -201,6 +201,45 @@ test('payout missing_scope when wallet permission is absent', async () => {
   await assert.rejects(f.service().payout(payout), { code: 'missing_scope' });
 });
 
+test('payout falls back to the completed purchase sender when /me has no wallet address', async () => {
+  const f = fixture({ from_address: 'fixture-wallet', to_address: 'fixture-app-wallet' });
+  f.identity = { uid: 'fixture-user', credentials: { scopes: ['username', 'payments', 'wallet_address'] } };
+  await f.service().approve(approval);
+  await f.service().complete(completion);
+  assert.equal(await f.store.get('user-payment:fixture-user'), 'fixture-payment');
+  assert.equal((await f.service().payout(payout)).status, 'completed');
+  assert.equal(f.counts().createCalls, 1);
+  assert.equal(f.counts().prepareCalls, 1);
+  assert.equal(f.counts().submitCalls, 1);
+});
+
+test('payout fallback refuses a purchase that is not completed', async () => {
+  const f = fixture();
+  f.identity = { uid: 'fixture-user', credentials: { scopes: ['username', 'payments', 'wallet_address'] } };
+  await f.store.set('user-payment:fixture-user', 'fixture-payment');
+  await assert.rejects(f.service().payout(payout), { code: 'missing_scope', status: 403 });
+  assert.equal(f.counts().createCalls, 0);
+});
+
+test('payout refuses when the A2U destination differs from the proven recipient', async () => {
+  const f = fixture({ from_address: 'fixture-wallet', to_address: 'fixture-app-wallet' });
+  await f.service().approve(approval);
+  await f.service().complete(completion);
+  f.identity = { uid: 'fixture-user', credentials: { scopes: ['username', 'payments', 'wallet_address'] } };
+  const purchase = structuredClone(f.current);
+  const getPayment = f.pi.getPayment.bind(f.pi);
+  // This scenario has two records; preserve the purchase when the fixture switches to A2U.
+  f.pi.getPayment = async id => id === purchase.identifier ? purchase : getPayment(id);
+  const alien = payment({ identifier: 'alien-payment', direction: 'app_to_user',
+    amount: 0.5, metadata: { product: 'test_payout' },
+    from_address: 'fixture-app-wallet', to_address: 'someone-else',
+    status: { developer_approved: true } });
+  f.current = alien; f.ongoing = [alien];
+  await assert.rejects(f.service().payout(payout), { code: 'payout_recipient_mismatch' });
+  assert.equal(f.counts().prepareCalls, 0);
+  assert.equal(f.counts().submitCalls, 0);
+});
+
 test('payout reconciles a crash between submit and complete with saved state', async () => {
   const f = fixture();
   f.crash = 'before_complete';

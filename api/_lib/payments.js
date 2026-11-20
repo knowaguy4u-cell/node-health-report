@@ -22,6 +22,16 @@ function createPayments({ pi, store, ledger }) {
     if (payment.user_uid !== user.uid) throw new HttpError(403, 'payment_owner_mismatch');
     if (payment.status?.cancelled || payment.status?.user_cancelled) throw new HttpError(409, 'payment_cancelled');
   }
+  async function recipientFromCompletedPurchase(user) {
+    const paymentId = await store.get(`user-payment:${user.uid}`);
+    if (typeof paymentId !== 'string' || !paymentId) return null;
+    const purchase = await pi.getPayment(paymentId);
+    validate(purchase, paymentId, user, 'user_to_app', PRICE, PRODUCT);
+    if (!purchase.status?.developer_completed || !purchase.status?.transaction_verified ||
+        !purchase.transaction?.verified) return null;
+    return typeof purchase.from_address === 'string' && purchase.from_address
+      ? purchase.from_address : null;
+  }
   async function fetchU2A(id, user) {
     const payment = await pi.getPayment(id);
     validate(payment, id, user, 'user_to_app', PRICE, PRODUCT);
@@ -48,6 +58,7 @@ function createPayments({ pi, store, ledger }) {
         uid: payment.user_uid, status: 'completed', txid: payment.transaction.txid,
         fulfilled: true, fulfillmentCount: 1,
       });
+      await store.set(`user-payment:${payment.user_uid}`, payment.identifier);
     }
     return { ok: true, status: 'completed', healthCheck: 'fulfilled' };
   }
@@ -102,10 +113,14 @@ function createPayments({ pi, store, ledger }) {
     },
     async payout({ accessToken }) {
       const user = await identify(accessToken);
-      if (!user.credentials?.scopes?.includes('wallet_address') ||
-          typeof user.wallet_address !== 'string' || !user.wallet_address) {
-        throw new HttpError(403, 'missing_scope');
+      let recipient = null;
+      if (user.credentials?.scopes?.includes('wallet_address') &&
+          typeof user.wallet_address === 'string' && user.wallet_address) {
+        recipient = user.wallet_address;
+      } else {
+        recipient = await recipientFromCompletedPurchase(user);
       }
+      if (!recipient) throw new HttpError(403, 'missing_scope');
       // Serialize the shared app wallet too: concurrent transactions for
       // different uids would otherwise consume the same account sequence.
       return store.withLock('payout:wallet', () => store.withLock(`payout:${user.uid}`, async () => {
@@ -143,6 +158,7 @@ function createPayments({ pi, store, ledger }) {
           // Pi's current payment destination is authoritative (wallets may
           // change). No browser-supplied address ever enters the transaction.
           if (!payment.to_address || !payment.from_address) throw new HttpError(502, 'invalid_pi_response');
+          if (payment.to_address !== recipient) throw new HttpError(403, 'payout_recipient_mismatch');
           if (payment.status?.developer_completed) {
             if (!payment.status.transaction_verified || !payment.transaction?.verified) throw new HttpError(502, 'payment_not_verified');
             await save({ status: 'completed', txid: payment.transaction.txid, xdr: null });
