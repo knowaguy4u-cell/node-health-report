@@ -240,6 +240,70 @@ test('payout refuses when the A2U destination differs from the proven recipient'
   assert.equal(f.counts().submitCalls, 0);
 });
 
+function bodyPurchaseFixture(overrides = {}) {
+  const f = fixture({
+    from_address: 'fixture-wallet', to_address: 'fixture-app-wallet',
+    status: { developer_approved: true, developer_completed: true, transaction_verified: true },
+    transaction: { txid: 'fixture-tx', verified: true }, ...overrides,
+  });
+  f.identity = { uid: 'fixture-user', credentials: { scopes: ['username', 'payments', 'wallet_address'] } };
+  const purchase = structuredClone(f.current);
+  const getPayment = f.pi.getPayment.bind(f.pi);
+  f.pi.getPayment = async id => id === purchase.identifier ? purchase : getPayment(id);
+  // Give the A2U record its own identifier so both records remain addressable.
+  const createA2UPayment = f.pi.createA2UPayment.bind(f.pi);
+  f.pi.createA2UPayment = async data => {
+    const created = await createA2UPayment(data);
+    created.identifier = 'fixture-payout';
+    f.current.identifier = created.identifier;
+    return created;
+  };
+  return f;
+}
+
+test('payout uses the body purchasePaymentId when /me has no wallet address and no index exists', async () => {
+  const f = bodyPurchaseFixture();
+  assert.equal(await f.store.get('user-payment:fixture-user'), undefined);
+  const result = await f.service().payout({ accessToken: 'fixture-access-token', purchasePaymentId: 'fixture-payment' });
+  assert.equal(result.status, 'completed');
+  assert.equal(f.counts().createCalls, 1);
+  assert.equal(f.counts().prepareCalls, 1);
+  assert.equal(f.counts().submitCalls, 1);
+});
+
+test('payout refuses a body purchasePaymentId owned by another user', async () => {
+  const f = bodyPurchaseFixture({ user_uid: 'someone-else' });
+  await assert.rejects(f.service().payout({ ...payout, purchasePaymentId: 'fixture-payment' }), { code: 'missing_scope' });
+  assert.equal(f.counts().createCalls, 0);
+});
+
+test('payout refuses a body purchasePaymentId that is not completed', async () => {
+  const f = bodyPurchaseFixture({ status: { developer_completed: false }, transaction: null });
+  await assert.rejects(f.service().payout({ ...payout, purchasePaymentId: 'fixture-payment' }), { code: 'missing_scope' });
+  assert.equal(f.counts().createCalls, 0);
+});
+
+test('payout diagnostics logs one line with the recipient source and no address', async () => {
+  const f = bodyPurchaseFixture();
+  const lines = [];
+  const originalLog = console.log;
+  console.log = line => lines.push(line);
+  try {
+    await f.service().payout({ ...payout, purchasePaymentId: 'fixture-payment' });
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]), { event: 'payout_recipient', source: 'purchase', purchaseStage: null });
+    assert.equal(lines[0].includes('fixture-wallet'), false);
+    lines.length = 0;
+    const noPaths = fixture();
+    noPaths.identity = { uid: 'fixture-user', credentials: { scopes: [] } };
+    await assert.rejects(noPaths.service().payout(payout), { code: 'missing_scope' });
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]), { event: 'payout_recipient', source: 'none', purchaseStage: null });
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('payout reconciles a crash between submit and complete with saved state', async () => {
   const f = fixture();
   f.crash = 'before_complete';

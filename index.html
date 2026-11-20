@@ -47,6 +47,22 @@
   // Session memory only: never put the token in storage, URLs, or logs.
   let accessToken;
   const incompletePayments = [];
+  const PURCHASE_KEY = 'nhr:lastPurchasePaymentId';
+  let lastPurchasePaymentId = null;
+
+  function loadStoredPurchaseId() {
+    try { lastPurchasePaymentId = localStorage.getItem(PURCHASE_KEY); } catch {}
+  }
+
+  function rememberPurchaseId(id) {
+    if (typeof id !== 'string' || !id) return;
+    try {
+      lastPurchasePaymentId = id;
+      localStorage.setItem(PURCHASE_KEY, id);
+    } catch {}
+  }
+
+  loadStoredPurchaseId();
 
   function report(message) {
     const line = document.createElement('p');
@@ -73,6 +89,9 @@
     report('Resuming incomplete payment.');
     try {
       const result = await post('/api/payments/resume', { payment });
+      if (result.healthCheck === 'fulfilled' && typeof payment.identifier === 'string' && payment.identifier) {
+        rememberPurchaseId(payment.identifier);
+      }
       report('Incomplete payment: ' + result.status + (result.healthCheck ? ' — full health check unlocked.' : ''));
     } catch (error) {
       report('Incomplete payment could not be resumed. ' + error.message);
@@ -128,6 +147,7 @@
           report('Transaction submitted. Awaiting server completion.');
           try {
             const result = await post('/api/payments/complete', { paymentId, txid });
+            if (result.healthCheck === 'fulfilled') rememberPurchaseId(paymentId);
             report(result.healthCheck === 'fulfilled' ? 'Payment completed. Full health check unlocked.' : 'Payment: ' + result.status + '.');
           } catch (error) {
             report('Completion pending. Sign in again to resume. ' + error.message);
@@ -152,7 +172,7 @@
     payout.disabled = true;
     report('Sending test payout.');
     try {
-      const result = await post('/api/payout', {});
+      const result = await post('/api/payout', lastPurchasePaymentId ? { purchasePaymentId: lastPurchasePaymentId } : {});
       report('Test payout: ' + result.status + '.');
     } catch (error) {
       report('Test payout pending or failed. ' + error.message);

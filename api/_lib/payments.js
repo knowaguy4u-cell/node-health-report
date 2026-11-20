@@ -32,6 +32,20 @@ function createPayments({ pi, store, ledger }) {
     return typeof purchase.from_address === 'string' && purchase.from_address
       ? purchase.from_address : null;
   }
+  async function recipientFromPurchaseRecord(user, paymentId) {
+    if (typeof paymentId !== 'string' || !paymentId) return { recipient: null, stage: 'no_id' };
+    let purchase;
+    try { purchase = await pi.getPayment(paymentId); }
+    catch { return { recipient: null, stage: 'fetch_failed' }; }
+    try { validate(purchase, paymentId, user, 'user_to_app', PRICE, PRODUCT); }
+    catch (error) { return { recipient: null, stage: error instanceof HttpError ? error.code : 'invalid_pi_response' }; }
+    if (!purchase.status?.developer_completed || !purchase.status?.transaction_verified ||
+        !purchase.transaction?.verified) return { recipient: null, stage: 'not_completed' };
+    if (typeof purchase.from_address !== 'string' || !purchase.from_address) {
+      return { recipient: null, stage: 'no_from_address' };
+    }
+    return { recipient: purchase.from_address, stage: null };
+  }
   async function fetchU2A(id, user) {
     const payment = await pi.getPayment(id);
     validate(payment, id, user, 'user_to_app', PRICE, PRODUCT);
@@ -111,15 +125,28 @@ function createPayments({ pi, store, ledger }) {
         return { ok: true, status: 'awaiting_user_transaction' };
       });
     },
-    async payout({ accessToken }) {
+    async payout({ accessToken, purchasePaymentId }) {
       const user = await identify(accessToken);
       let recipient = null;
+      let source = 'none';
+      let purchaseStage = null;
       if (user.credentials?.scopes?.includes('wallet_address') &&
           typeof user.wallet_address === 'string' && user.wallet_address) {
         recipient = user.wallet_address;
+        source = 'me';
       } else {
-        recipient = await recipientFromCompletedPurchase(user);
+        if (typeof purchasePaymentId === 'string' && purchasePaymentId) {
+          const purchase = await recipientFromPurchaseRecord(user, purchasePaymentId);
+          recipient = purchase.recipient;
+          purchaseStage = purchase.stage;
+          if (recipient) source = 'purchase';
+        }
+        if (!recipient) {
+          recipient = await recipientFromCompletedPurchase(user);
+          if (recipient) source = 'index';
+        }
       }
+      console.log(JSON.stringify({ event: 'payout_recipient', source, purchaseStage }));
       if (!recipient) throw new HttpError(403, 'missing_scope');
       // Serialize the shared app wallet too: concurrent transactions for
       // different uids would otherwise consume the same account sequence.

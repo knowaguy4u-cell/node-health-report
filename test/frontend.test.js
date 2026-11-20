@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const html = readFileSync(require.resolve('../index.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-function browser({ incomplete = false, fail = false } = {}) {
+function browser({ incomplete = false, fail = false, storage = new Map() } = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -28,7 +28,12 @@ function browser({ incomplete = false, fail = false } = {}) {
     },
     async createPayment(data, handlers) { paymentData = data; callbacks = handlers; },
   };
-  const context = vm.createContext({ Pi, document: { getElementById: element, createElement: () => ({}) },
+  const localStorage = {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: key => storage.delete(key),
+  };
+  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: () => ({}) },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       return { ok: !fail, json: async () => fail ? { error: 'missing_scope' } : { status: 'completed', healthCheck: 'fulfilled' } };
@@ -66,7 +71,7 @@ test('frontend wires both U2A callbacks and payout to the absolute backend', asy
   ]);
   for (const call of b.calls) assert.equal(call.headers.Authorization, 'Bearer fixture-access-token');
   assert.deepEqual(JSON.parse(b.calls[1].body), { paymentId: 'fixture-payment', txid: 'fixture-tx' });
-  assert.deepEqual(JSON.parse(b.calls[2].body), {});
+  assert.deepEqual(JSON.parse(b.calls[2].body), { purchasePaymentId: 'fixture-payment' });
 });
 
 test('frontend reports backend failures, cancellation and SDK errors', async () => {
@@ -81,4 +86,25 @@ test('frontend reports backend failures, cancellation and SDK errors', async () 
   assert.doesNotMatch(b.element('payment-status').children.at(-1).textContent, /private/);
   await b.element('payout').click();
   assert.match(b.element('payment-status').children.at(-1).textContent, /Wallet address permission is missing/);
+});
+
+
+test('frontend sends an empty payout body when no purchase is stored', async () => {
+  const b = browser();
+  await b.element('signin').click();
+  await b.element('payout').click();
+  assert.deepEqual(JSON.parse(b.calls[0].body), {});
+});
+
+test('frontend remembers the purchase across a reload for the payout body', async () => {
+  const storage = new Map();
+  const a = browser({ storage });
+  await a.element('signin').click();
+  await a.element('health-check').click();
+  await a.callbacks.onReadyForServerApproval('fixture-payment');
+  await a.callbacks.onReadyForServerCompletion('fixture-payment', 'fixture-tx');
+  const b = browser({ storage });
+  await b.element('signin').click();
+  await b.element('payout').click();
+  assert.deepEqual(JSON.parse(b.calls[0].body), { purchasePaymentId: 'fixture-payment' });
 });
