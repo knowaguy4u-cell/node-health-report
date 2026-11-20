@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Node Health Report</title>
+<script src="https://sdk.minepi.com/pi-sdk.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; padding: 0 1rem; }
+  .card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  .ok { color: #0a7d2c; } .warn { color: #b26a00; } .bad { color: #b00020; }
+  button { font-size: 1rem; padding: 0.5rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Node Health Report</h1>
+<p>A plain-words health report for your Pi Node: what is running, what is stale, and what to fix first.</p>
+
+<div class="card">
+  <p id="auth-status">Not signed in yet.</p>
+  <button id="signin">Sign in with Pi</button>
+</div>
+
+<div class="card" id="report" hidden>
+  <h2>Your node report</h2>
+  <p>Signed in as <strong id="username"></strong>. The full report checks land here as the build proceeds.</p>
+  <ul>
+    <li>Node status: <span class="warn">not checked yet</span></li>
+    <li>Blockchain sync: <span class="warn">not checked yet</span></li>
+    <li>Ports and connectivity: <span class="warn">not checked yet</span></li>
+  </ul>
+</div>
+
+<script>
+  // Testnet app: sandbox mode stays on until a Production app exists.
+  Pi.init({ version: "2.0", sandbox: true });
+
+  const status = document.getElementById('auth-status');
+  document.getElementById('signin').addEventListener('click', async () => {
+    try {
+      const auth = await Pi.authenticate(['username'], (payment) => {
+        console.log('incomplete payment found', payment);
+      });
+      status.textContent = 'Signed in.';
+      status.className = 'ok';
+      document.getElementById('username').textContent = auth.user.username;
+      document.getElementById('report').hidden = false;
+      // The access token goes to our backend for verification when the
+      // backend lands. Never store it in the page.
+    } catch (err) {
+      status.textContent = 'Sign-in failed: ' + err.message;
+      status.className = 'bad';
+    }
+  });
+</script>
+</body>
+</html>
