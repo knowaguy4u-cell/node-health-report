@@ -29,28 +29,134 @@
     <li>Blockchain sync: <span class="warn">not checked yet</span></li>
     <li>Ports and connectivity: <span class="warn">not checked yet</span></li>
   </ul>
+  <p><button id="health-check">Run full health check — 1 Test-Pi</button></p>
+  <p><button id="payout">Send test payout — 0.5 Test-Pi</button></p>
+  <div id="payment-status" role="status" aria-live="polite"></div>
 </div>
 
 <script>
+  const API_BASE = "https://node-health-report.vercel.app";
   // Testnet app: sandbox mode stays on until a Production app exists.
   Pi.init({ version: "2.0", sandbox: true });
 
   const status = document.getElementById('auth-status');
-  document.getElementById('signin').addEventListener('click', async () => {
+  const messages = document.getElementById('payment-status');
+  const signin = document.getElementById('signin');
+  const healthCheck = document.getElementById('health-check');
+  const payout = document.getElementById('payout');
+  // Session memory only: never put the token in storage, URLs, or logs.
+  let accessToken;
+  const incompletePayments = [];
+
+  function report(message) {
+    const line = document.createElement('p');
+    line.textContent = message;
+    messages.appendChild(line);
+  }
+
+  async function post(path, body) {
+    if (!accessToken) throw new Error('Sign in with Pi first.');
+    const response = await fetch(API_BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      if (result.error === 'missing_scope') throw new Error('Wallet address permission is missing. Sign in again and grant wallet_address.');
+      throw new Error('Backend request failed. Please retry or sign in again.');
+    }
+    return result;
+  }
+
+  async function resumePayment(payment) {
+    report('Resuming incomplete payment.');
     try {
-      const auth = await Pi.authenticate(['username'], (payment) => {
-        console.log('incomplete payment found', payment);
-      });
+      const result = await post('/api/payments/resume', { payment });
+      report('Incomplete payment: ' + result.status + (result.healthCheck ? ' — full health check unlocked.' : ''));
+    } catch (error) {
+      report('Incomplete payment could not be resumed. ' + error.message);
+    }
+  }
+
+  function onIncompletePaymentFound(payment) {
+    // Pi may invoke this callback before authenticate returns the access token.
+    // Queue it without awaiting auth from inside auth's own callback.
+    if (!accessToken) incompletePayments.push(payment);
+    else return resumePayment(payment);
+  }
+
+  signin.addEventListener('click', async () => {
+    signin.disabled = true;
+    accessToken = undefined;
+    try {
+      const auth = await Pi.authenticate(['username', 'payments', 'wallet_address'], onIncompletePaymentFound);
+      accessToken = auth.accessToken;
       status.textContent = 'Signed in.';
       status.className = 'ok';
       document.getElementById('username').textContent = auth.user.username;
       document.getElementById('report').hidden = false;
-      // The access token goes to our backend for verification when the
-      // backend lands. Never store it in the page.
-    } catch (err) {
-      status.textContent = 'Sign-in failed: ' + err.message;
+      for (const payment of incompletePayments.splice(0)) await resumePayment(payment);
+    } catch {
+      status.textContent = 'Sign-in failed. Please try again in Pi Browser.';
       status.className = 'bad';
+    } finally {
+      signin.disabled = false;
     }
+  });
+
+  healthCheck.addEventListener('click', async () => {
+    healthCheck.disabled = true;
+    report('Starting full health check payment.');
+    try {
+      await Pi.createPayment({
+        amount: 1,
+        memo: "Node Health Report — full health check",
+        metadata: { product: "full_health_check" },
+      }, {
+        onReadyForServerApproval: async (paymentId) => {
+          report('Awaiting server approval.');
+          try {
+            const result = await post('/api/payments/approve', { paymentId });
+            report('Payment: ' + result.status + '.');
+          } catch (error) {
+            report('Approval failed. ' + error.message);
+            healthCheck.disabled = false;
+          }
+        },
+        onReadyForServerCompletion: async (paymentId, txid) => {
+          report('Transaction submitted. Awaiting server completion.');
+          try {
+            const result = await post('/api/payments/complete', { paymentId, txid });
+            report(result.healthCheck === 'fulfilled' ? 'Payment completed. Full health check unlocked.' : 'Payment: ' + result.status + '.');
+          } catch (error) {
+            report('Completion pending. Sign in again to resume. ' + error.message);
+          } finally { healthCheck.disabled = false; }
+        },
+        onCancel: () => {
+          report('Payment cancelled.');
+          healthCheck.disabled = false;
+        },
+        onError: () => {
+          report('Payment error. Sign in again to resume any incomplete payment.');
+          healthCheck.disabled = false;
+        },
+      });
+    } catch {
+      report('Unable to start payment. Please sign in again.');
+      healthCheck.disabled = false;
+    }
+  });
+
+  payout.addEventListener('click', async () => {
+    payout.disabled = true;
+    report('Sending test payout.');
+    try {
+      const result = await post('/api/payout', {});
+      report('Test payout: ' + result.status + '.');
+    } catch (error) {
+      report('Test payout pending or failed. ' + error.message);
+    } finally { payout.disabled = false; }
   });
 </script>
 </body>
