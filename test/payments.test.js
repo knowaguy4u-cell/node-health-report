@@ -393,8 +393,22 @@ test('HTTP CORS allows both app origins and preflights without auth', async () =
   }
   const rejected = await call(handler(() => ({})), { headers: { origin: 'https://attacker.invalid' } });
   assert.equal(rejected.statusCode, 403);
+  assert.deepEqual(rejected.body, { error: 'origin_not_allowed' });
   assert.equal(rejected.headers['Access-Control-Allow-Origin'], undefined);
 });
+
+for (const origin of ['https://node-health-report.vercel.app', 'https://nodehealthreport3739.pinet.com']) {
+  test(`HTTP CORS allows POST from ${origin}`, async () => {
+    let called = false;
+    const res = await call(handler(() => { called = true; return { ok: true }; }), {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { ok: true });
+    assert.equal(called, true);
+    assert.equal(res.headers['Access-Control-Allow-Origin'], origin);
+  });
+}
 
 test('HTTP accepts bearer token, rejects invalid JSON and methods, sanitizes errors', async () => {
   let seen;
