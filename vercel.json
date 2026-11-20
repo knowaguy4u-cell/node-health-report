@@ -7,11 +7,5 @@
     "api/payout.js": {
       "maxDuration": 60
     }
-  },
-  "rewrites": [
-    {
-      "source": "/validation-key.txt",
-      "destination": "/validation-key-mainnet.txt"
-    }
-  ]
+  }
 }
