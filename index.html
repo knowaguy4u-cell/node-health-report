@@ -6,33 +6,79 @@
 <title>Node Health Report</title>
 <script src="https://sdk.minepi.com/pi-sdk.js"></script>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; padding: 0 1rem; }
-  .card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
-  .ok { color: #0a7d2c; } .warn { color: #b26a00; } .bad { color: #b00020; }
-  button { font-size: 1rem; padding: 0.5rem 1rem; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 40rem; padding: 2rem 1rem; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #243248; background: #f5f7fb; }
+  h1, h2, h3 { line-height: 1.25; color: #17253c; }
+  h1 { font-size: 2rem; margin-bottom: .6rem; }
+  h2 { font-size: 1.3rem; margin-top: 0; }
+  h3 { font-size: 1.05rem; }
+  .badge { display: inline-block; padding: .65rem .85rem; border: 1px solid #e6ce8f; border-radius: .75rem; background: #fff6dc; color: #725000; font-size: .9rem; }
+  .card { background: #fff; border: 1px solid #dce2ec; border-radius: 1rem; padding: 1.4rem; margin: 1.2rem 0; box-shadow: 0 3px 12px #24324806; }
+  .steps { display: flex; gap: .6rem; padding: 0; margin: 1.6rem 0; list-style: none; }
+  .steps li { flex: 1; font-size: .85rem; color: #566277; border-top: 3px solid #dce2ec; padding-top: .7rem; }
+  .steps .current { color: #344cc3; border-color: #344cc3; font-weight: 700; }
+  .steps .done { color: #19643c; border-color: #268353; }
+  .ok { color: #19643c; } .warn { color: #795500; } .bad { color: #aa2837; }
+  button { min-height: 48px; width: 100%; border: 1px solid #344cc3; border-radius: .7rem; background: #344cc3; color: #fff; font: inherit; font-weight: 650; padding: .8rem 1rem; cursor: pointer; }
+  button:disabled { background: #e8ecf3; border-color: #cbd3e1; color: #566277; cursor: default; }
+  button:focus-visible, summary:focus-visible { outline: 3px solid #795500; outline-offset: 4px; }
+  .checks { list-style: none; padding: 0; }
+  .checks li { padding: .85rem 0; border-bottom: 1px solid #e6eaf1; }
+  .checks span { display: block; font-size: .9rem; }
+  .hint, footer { font-size: .9rem; color: #566277; }
+  .status-area { display: flex; flex-direction: column; margin-top: 1.2rem; }
+  .status-banner { order: -1; padding: 1rem; border: 1px solid #cbd3e1; border-radius: .75rem; background: #eff2fc; overflow-wrap: anywhere; }
+  .status-banner.working { color: #725000; background: #fff6dc; border-color: #e6ce8f; }
+  .status-banner.success { color: #19643c; background: #edf8f0; border-color: #b7dbc4; }
+  .status-banner.error { color: #aa2837; background: #fff0f1; border-color: #e9b8bf; }
+  details { color: #566277; font-size: .85rem; }
+  summary { cursor: pointer; padding: .5rem 0; }
+  #status-history { padding-left: 1.3rem; overflow-wrap: anywhere; }
+  #status-history li { margin-bottom: .5rem; }
+  footer { text-align: center; margin-top: 2rem; }
+  [hidden] { display: none !important; }
+  @media (min-width: 36rem) { body { padding-top: 3rem; } .checks span { float: right; } }
 </style>
 </head>
 <body>
-<h1>Node Health Report</h1>
-<p>A plain-words health report for your Pi Node: what is running, what is stale, and what to fix first.</p>
-
-<div class="card">
-  <p id="auth-status">Not signed in yet.</p>
-  <button id="signin">Sign in with Pi</button>
-</div>
-
-<div class="card" id="report" hidden>
-  <h2>Your node report</h2>
-  <p>Signed in as <strong id="username"></strong>. The full report checks land here as the build proceeds.</p>
-  <ul>
-    <li>Node status: <span class="warn">not checked yet</span></li>
-    <li>Blockchain sync: <span class="warn">not checked yet</span></li>
-    <li>Ports and connectivity: <span class="warn">not checked yet</span></li>
-  </ul>
-  <p><button id="health-check">Run full health check — 1 Test-Pi</button></p>
-  <p><button id="payout">Send test payout — 0.5 Test-Pi</button></p>
-  <div id="payment-status" role="status" aria-live="polite"></div>
-</div>
+<header>
+  <h1>Node Health Report</h1>
+  <p>Check your Pi Node’s status, see whether it is up to date, and find what needs attention.</p>
+  <p class="badge">Test mode — Test-Pi is test money with no real value.</p>
+</header>
+<main>
+  <ol class="steps" aria-label="Your progress">
+    <li id="step-signin" class="current" aria-current="step">1 Sign in</li>
+    <li id="step-check">2 Health check</li>
+    <li id="step-payout">3 Test payout</li>
+  </ol>
+  <section class="card" aria-labelledby="signin-title">
+    <h2 id="signin-title">Start with your Pi account</h2>
+    <p id="signin-help">Sign in with your Pi account so the app can run your check and send your payout.</p>
+    <p id="auth-status">Not signed in yet. <strong id="username"></strong></p>
+    <button id="signin">Sign in with Pi</button>
+  </section>
+  <section class="card" id="report" aria-labelledby="report-title">
+    <h2 id="report-title">Your node report</h2>
+    <p>What you'll get: a full health check covering your node’s status, blockchain sync, and ports and connectivity.</p>
+    <ul class="checks">
+      <li>Node status <span id="check-node" class="warn">not checked yet</span></li>
+      <li>Blockchain sync <span id="check-sync" class="warn">not checked yet</span></li>
+      <li>Ports and connectivity <span id="check-ports" class="warn">not checked yet</span></li>
+    </ul>
+    <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
+    <p><button id="health-check" disabled>Run full health check — 1 Test-Pi</button></p>
+    <p id="check-hint" class="hint">Sign in above to run your health check.</p>
+    <h3>Try a test payout</h3>
+    <button id="payout" aria-describedby="payout-hint" disabled>Send test payout — 0.5 Test-Pi</button>
+    <p id="payout-hint" class="hint">Available after your health check is complete.</p>
+    <div id="payment-status" class="status-area" role="status" aria-live="polite">
+      <p id="latest-status" class="status-banner info">Sign in to get started. Your full health check costs 1 Test-Pi.</p>
+      <details><summary>Details</summary><ol id="status-history"></ol></details>
+    </div>
+  </section>
+</main>
+<footer>Built by TMT Productions for the Pi Next hackathon.</footer>
 
 <script>
   const API_BASE = "https://node-health-report.vercel.app";
@@ -42,6 +88,7 @@
   const status = document.getElementById('auth-status');
   const messages = document.getElementById('payment-status');
   const signin = document.getElementById('signin');
+  const username = document.getElementById('username');
   const healthCheck = document.getElementById('health-check');
   const payout = document.getElementById('payout');
   // Session memory only: never put the token in storage, URLs, or logs.
@@ -62,12 +109,50 @@
     } catch {}
   }
 
-  loadStoredPurchaseId();
+  let signedIn = false;
+  let purchaseCompleted = false;
 
-  function report(message) {
-    const line = document.createElement('p');
+  function updateProgress() {
+    const stage = purchaseCompleted ? 2 : signedIn ? 1 : 0;
+    ['step-signin', 'step-check', 'step-payout'].forEach((id, index) => {
+      const step = document.getElementById(id);
+      step.className = index < stage ? 'done' : index === stage ? 'current' : '';
+      // A null value removes aria-current from completed and future steps.
+      step.ariaCurrent = index === stage ? 'step' : null;
+    });
+    payout.disabled = !purchaseCompleted && !lastPurchasePaymentId;
+    document.getElementById('payout-hint').textContent = payout.disabled
+      ? 'Available after your health check is complete.'
+      : signedIn ? 'Ready to send your 0.5 Test-Pi test payout.' : 'Sign in to send your 0.5 Test-Pi test payout.';
+  }
+
+  function unlockReport() {
+    purchaseCompleted = true;
+    ['check-node', 'check-sync', 'check-ports'].forEach(id => {
+      const row = document.getElementById(id);
+      row.textContent = 'Check complete — ready to view';
+      row.className = 'ok';
+    });
+    document.getElementById('report-ready').hidden = false;
+    updateProgress();
+  }
+
+  function setHealthWorking(working) {
+    healthCheck.disabled = working;
+    healthCheck.textContent = working ? 'Working…' : 'Run full health check — 1 Test-Pi';
+  }
+
+  loadStoredPurchaseId();
+  updateProgress();
+
+  function report(message, kind = 'info') {
+    const line = document.createElement('li');
     line.textContent = message;
-    messages.appendChild(line);
+    document.getElementById('status-history').appendChild(line);
+    const banner = document.getElementById('latest-status');
+    banner.textContent = message;
+    banner.className = 'status-banner ' + kind;
+    messages.appendChild(banner);
   }
 
   async function post(path, body) {
@@ -80,21 +165,22 @@
     const result = await response.json();
     if (!response.ok) {
       if (result.error === 'missing_scope') throw new Error('Wallet address permission is missing. Sign in again and grant wallet_address.');
-      throw new Error('Backend request failed. Please retry or sign in again.');
+      throw new Error('Something went wrong on our side. Please try again in a moment.');
     }
     return result;
   }
 
   async function resumePayment(payment) {
-    report('Resuming incomplete payment.');
+    report('Picking up your unfinished payment…', 'working');
     try {
       const result = await post('/api/payments/resume', { payment });
       if (result.healthCheck === 'fulfilled' && typeof payment.identifier === 'string' && payment.identifier) {
         rememberPurchaseId(payment.identifier);
       }
-      report('Incomplete payment: ' + result.status + (result.healthCheck ? ' — full health check unlocked.' : ''));
+      if (result.healthCheck === 'fulfilled') unlockReport();
+      report(result.healthCheck === 'fulfilled' ? 'Payment completed — your full health check is unlocked.' : 'Your unfinished payment is ' + result.status + '.', result.healthCheck === 'fulfilled' ? 'success' : 'info');
     } catch (error) {
-      report('Incomplete payment could not be resumed. ' + error.message);
+      report('We could not pick up your unfinished payment. ' + error.message, 'error');
     }
   }
 
@@ -111,22 +197,29 @@
     try {
       const auth = await Pi.authenticate(['username', 'payments', 'wallet_address'], onIncompletePaymentFound);
       accessToken = auth.accessToken;
-      status.textContent = 'Signed in.';
+      status.textContent = 'Signed in as ';
+      status.appendChild(username);
+      signedIn = true;
+      signin.textContent = 'Signed in';
+      setHealthWorking(false);
+      document.getElementById('signin-help').hidden = true;
+      document.getElementById('check-hint').hidden = true;
+      updateProgress();
       status.className = 'ok';
-      document.getElementById('username').textContent = auth.user.username;
+      username.textContent = auth.user.username;
       document.getElementById('report').hidden = false;
       for (const payment of incompletePayments.splice(0)) await resumePayment(payment);
     } catch {
       status.textContent = 'Sign-in failed. Please try again in Pi Browser.';
       status.className = 'bad';
     } finally {
-      signin.disabled = false;
+      signin.disabled = signedIn;
     }
   });
 
   healthCheck.addEventListener('click', async () => {
-    healthCheck.disabled = true;
-    report('Starting full health check payment.');
+    setHealthWorking(true);
+    report('Opening Pi to pay 1 Test-Pi for your health check…', 'working');
     try {
       await Pi.createPayment({
         amount: 1,
@@ -134,49 +227,56 @@
         metadata: { product: "full_health_check" },
       }, {
         onReadyForServerApproval: async (paymentId) => {
-          report('Awaiting server approval.');
+          report('Waiting for Pi to approve the payment…', 'working');
           try {
             const result = await post('/api/payments/approve', { paymentId });
-            report('Payment: ' + result.status + '.');
+            report('Your payment is ' + result.status + '.', 'working');
           } catch (error) {
-            report('Approval failed. ' + error.message);
-            healthCheck.disabled = false;
+            report('Your payment could not be approved. ' + error.message, 'error');
+            setHealthWorking(false);
           }
         },
         onReadyForServerCompletion: async (paymentId, txid) => {
-          report('Transaction submitted. Awaiting server completion.');
+          report('Payment sent. Waiting for confirmation…', 'working');
           try {
             const result = await post('/api/payments/complete', { paymentId, txid });
-            if (result.healthCheck === 'fulfilled') rememberPurchaseId(paymentId);
-            report(result.healthCheck === 'fulfilled' ? 'Payment completed. Full health check unlocked.' : 'Payment: ' + result.status + '.');
+            if (result.healthCheck === 'fulfilled') {
+              rememberPurchaseId(paymentId);
+              unlockReport();
+            }
+            report(result.healthCheck === 'fulfilled' ? 'Done — your full health check is unlocked.' : 'Your payment is ' + result.status + '.', result.healthCheck === 'fulfilled' ? 'success' : 'info');
           } catch (error) {
-            report('Completion pending. Sign in again to resume. ' + error.message);
-          } finally { healthCheck.disabled = false; }
+            report('Completion pending. Reopen the app and sign in again to finish your payment. ' + error.message, 'error');
+          } finally { setHealthWorking(false); }
         },
         onCancel: () => {
-          report('Payment cancelled.');
-          healthCheck.disabled = false;
+          report('Payment cancelled. Nothing was charged. You can try again any time.', 'info');
+          setHealthWorking(false);
         },
         onError: () => {
-          report('Payment error. Sign in again to resume any incomplete payment.');
-          healthCheck.disabled = false;
+          report('Your payment hit a problem. Reopen the app and sign in again to pick up any unfinished payment.', 'error');
+          setHealthWorking(false);
         },
       });
     } catch {
-      report('Unable to start payment. Please sign in again.');
-      healthCheck.disabled = false;
+      report('We could not start your payment. Reopen the app and sign in again to try once more.', 'error');
+      setHealthWorking(false);
     }
   });
 
   payout.addEventListener('click', async () => {
     payout.disabled = true;
-    report('Sending test payout.');
+    payout.textContent = 'Sending…';
+    report('Sending your 0.5 Test-Pi payout…', 'working');
     try {
       const result = await post('/api/payout', lastPurchasePaymentId ? { purchasePaymentId: lastPurchasePaymentId } : {});
-      report('Test payout: ' + result.status + '.');
+      report('Your test payout is ' + result.status + '.', result.status === 'completed' ? 'success' : 'info');
     } catch (error) {
-      report('Test payout pending or failed. ' + error.message);
-    } finally { payout.disabled = false; }
+      report('Your test payout has not been confirmed. ' + error.message, 'error');
+    } finally {
+      payout.disabled = false;
+      payout.textContent = 'Send test payout — 0.5 Test-Pi';
+    }
   });
 </script>
 </body>
