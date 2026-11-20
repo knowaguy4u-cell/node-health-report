@@ -481,17 +481,24 @@ test('payout logs only fetch and complete for a Pi linked transaction', async ()
   });
 });
 
-for (const scenario of ['valid', 'wrong_wallet', 'malformed', 'missing', 'padded', 'empty']) {
-  test(`real ledger prepare logs safe keypair booleans for ${scenario} seed`, async () => {
+for (const scenario of ['valid', 'wrong_wallet', 'malformed', 'missing', 'padded', 'empty', 'public_key', 'short']) {
+  test(`real ledger prepare logs safe keypair diagnostics for ${scenario} seed`, async () => {
     const { Keypair } = require('@stellar/stellar-sdk');
     const a = Keypair.random(), b = Keypair.random();
     const secret = a.secret();
     const seed = { valid: secret, wrong_wallet: b.secret(), malformed: 'S' + '!'.repeat(55),
-      missing: undefined, padded: '  ' + secret + '\n', empty: ' \n' }[scenario];
-    const valid = !['malformed', 'missing', 'empty'].includes(scenario);
+      missing: undefined, padded: '  ' + secret + '\n', empty: ' \n',
+      public_key: a.publicKey(), short: 'SABC' }[scenario];
+    const valid = !['malformed', 'missing', 'empty', 'public_key', 'short'].includes(scenario);
     const matches = valid && scenario !== 'wrong_wallet';
     const code = { wrong_wallet: 'app_wallet_mismatch', malformed: 'transaction_build_failed',
-      missing: 'server_not_configured', empty: 'server_not_configured' }[scenario];
+      missing: 'server_not_configured', empty: 'server_not_configured',
+      public_key: 'transaction_build_failed', short: 'transaction_build_failed' }[scenario];
+    const seedShape = {
+      valid: [56, 'S', true], wrong_wallet: [56, 'S', true], malformed: [56, 'S', false],
+      missing: [0, '', true], padded: [56, 'S', true], empty: [0, '', true],
+      public_key: [56, 'G', true], short: [4, 'S', true],
+    }[scenario];
     const requests = [];
     const ledger = createLedger({
       env: seed === undefined ? {} : { PI_WALLET_SEED: seed },
@@ -511,7 +518,8 @@ for (const scenario of ['valid', 'wrong_wallet', 'malformed', 'missing', 'padded
         assert.match(prepared.txid, /^[a-f0-9]{64}$/);
       }
       assert.deepEqual(lines.map(line => JSON.parse(line)), [
-        { event: 'payout_stage', stage: 'keypair', seedValid: valid, seedMatchesWallet: matches },
+        { event: 'payout_stage', stage: 'keypair', seedValid: valid, seedMatchesWallet: matches,
+          seedLength: seedShape[0], seedFirstChar: seedShape[1], seedBase32Only: seedShape[2] },
       ]);
       for (const line of lines) {
         for (const sensitive of [seed, secret, b.secret(), a.publicKey(), b.publicKey()].filter(Boolean)) {

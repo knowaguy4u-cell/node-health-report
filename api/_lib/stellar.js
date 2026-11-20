@@ -22,6 +22,9 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
       const seed = typeof env.PI_WALLET_SEED === 'string' ? env.PI_WALLET_SEED.trim() : env.PI_WALLET_SEED;
       const logKeypair = (seedValid, seedMatchesWallet) => console.log(JSON.stringify({
         event: 'payout_stage', stage: 'keypair', seedValid, seedMatchesWallet,
+        seedLength: seed ? seed.length : 0,
+        seedFirstChar: seed ? seed[0] : '',
+        seedBase32Only: /^[A-Z2-7]*$/.test(seed || ''),
       }));
       if (!seed) {
         logKeypair(false, false);
