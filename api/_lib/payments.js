@@ -170,6 +170,22 @@ function createPayments({ pi, store, ledger }) {
         };
         const result = () => ({ ok: true, status: 'completed', paymentId: state.paymentId });
         if (state?.status === 'completed') return result();
+        // The volatile store is not the record; the chain is. Adopt a prior
+        // completed payout for this user, never repay it.
+        const candidates = await ledger.findPaymentsTo(recipient, '0.5');
+        for (const candidate of candidates) {
+          if (typeof candidate.memo !== 'string' || !candidate.memo) continue;
+          let payment;
+          try {
+            payment = await pi.getPayment(candidate.memo);
+            validate(payment, candidate.memo, user, 'app_to_user', PAYOUT, PAYOUT_PRODUCT);
+          } catch { continue; }
+          if (payment.transaction?.txid !== candidate.txid || !payment.status?.developer_completed ||
+              !payment.status?.transaction_verified || !payment.transaction?.verified) continue;
+          await save({ status: 'completed', paymentId: candidate.memo, txid: candidate.txid,
+            recoveredFromChain: true });
+          return result();
+        }
         try {
           if (!state?.paymentId) {
             await stage('create', async () => {

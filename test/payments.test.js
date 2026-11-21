@@ -76,6 +76,7 @@ function fixture(overrides = {}) {
   };
   const pi = createPiClient({ fetchImpl, env: { PI_NETWORK_API_KEY: 'fixture-api-credential' } });
   const ledger = createLedger({ fetchImpl, env: {} });
+  ledger.findPaymentsTo = async () => [];
   // Signing requires the external SDK. Only the envelope builder is replaced;
   // production Horizon lookup / submission and the Pi client use mocked fetch.
   ledger.prepare = async () => {
@@ -544,3 +545,82 @@ for (const scenario of ['valid', 'wrong_wallet', 'malformed', 'missing', 'padded
     });
   });
 }
+
+test('payout adopts a validated completed chain payment after store loss', async () => {
+  const f = fixture({ direction: 'app_to_user', amount: 0.5, metadata: { product: 'test_payout' },
+    status: { developer_completed: true, transaction_verified: true },
+    transaction: { txid: 'prior-tx', verified: true } });
+  f.ledger.findPaymentsTo = async (recipient, amount) => {
+    assert.equal(recipient, 'fixture-wallet');
+    assert.equal(amount, '0.5');
+    return [{ txid: 'prior-tx', memo: 'fixture-payment' }];
+  };
+  assert.deepEqual(await f.service().payout(payout), {
+    ok: true, status: 'completed', paymentId: 'fixture-payment',
+  });
+  assert.deepEqual(await f.store.get('payout:fixture-user'), {
+    status: 'completed', paymentId: 'fixture-payment', txid: 'prior-tx', recoveredFromChain: true,
+  });
+  assert.equal(f.counts().createCalls, 0);
+  assert.equal(f.counts().submitCalls, 0);
+});
+
+test('payout fails closed when chain history is unavailable', async () => {
+  const f = fixture();
+  const error = new HttpError(502, 'horizon_unavailable');
+  f.ledger.findPaymentsTo = async () => { throw error; };
+  await assert.rejects(f.service().payout(payout), actual => actual === error);
+  assert.equal(f.counts().createCalls, 0);
+  assert.equal(f.counts().submitCalls, 0);
+});
+
+test('payout creates normally when a chain candidate fails validation', async () => {
+  const f = fixture({ direction: 'app_to_user', amount: 0.5, metadata: { product: 'different' },
+    status: { developer_completed: true, transaction_verified: true },
+    transaction: { txid: 'prior-tx', verified: true } });
+  f.ledger.findPaymentsTo = async () => [{ txid: 'prior-tx', memo: 'fixture-payment' }];
+  assert.equal((await f.service().payout(payout)).status, 'completed');
+  assert.equal(f.counts().createCalls, 1);
+  assert.equal(f.counts().submitCalls, 1);
+});
+
+test('ledger history pages at most three times and filters native outgoing payments', async () => {
+  const { Keypair } = require('@stellar/stellar-sdk');
+  const signer = Keypair.random();
+  const app = signer.publicKey();
+  const base = { type: 'payment', from: app, to: 'fixture-wallet', asset_type: 'native', amount: '0.5000000' };
+  const path = `/accounts/${app}/operations?order=desc&limit=200`;
+  const requests = [];
+  const ledger = createLedger({
+    env: { PI_WALLET_SEED: '  ' + signer.secret() + '\n' },
+    fetchImpl: async url => {
+      requests.push(url);
+      const page = [path, path + '&cursor=2', path + '&cursor=3'].indexOf(url.slice(HORIZON.length));
+      if (page !== -1) return json({
+        _embedded: { records: page === 0 ? [
+          { ...base, transaction_hash: 'newest' },
+          ...[{ type: 'create_account' }, { from: 'other' }, { to: 'other' },
+            { asset_type: 'credit_alphanum4' }, { amount: '1' }].map(overrides => ({
+            ...base, transaction_hash: 'excluded', ...overrides,
+          })),
+        ] : [{ ...base, transaction_hash: page === 1 ? 'unsuccessful' : 'oldest' }] },
+        _links: { next: { href: HORIZON + path + '&cursor=' + (page + 2) } },
+      });
+      if (url === HORIZON + '/transactions/newest') return json({ hash: 'newest', memo: 'payment-new', successful: true });
+      if (url === HORIZON + '/transactions/unsuccessful') return json({ hash: 'unsuccessful', successful: false });
+      if (url === HORIZON + '/transactions/oldest') return json({ hash: 'oldest', successful: true });
+      throw new Error('Unexpected fixture URL');
+    },
+  });
+  await captureLogs(async lines => {
+    assert.deepEqual(await ledger.findPaymentsTo('fixture-wallet', '0.5'), [
+      { txid: 'newest', memo: 'payment-new' }, { txid: 'oldest', memo: undefined },
+    ]);
+    assert.deepEqual(lines, []);
+  });
+  assert.deepEqual(requests, [
+    HORIZON + path, HORIZON + '/transactions/newest',
+    HORIZON + path + '&cursor=2', HORIZON + '/transactions/unsuccessful',
+    HORIZON + path + '&cursor=3', HORIZON + '/transactions/oldest',
+  ]);
+});
