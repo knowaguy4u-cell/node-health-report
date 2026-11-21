@@ -812,7 +812,7 @@ test('gate repairs legacy fields, invalid entries and conflicting ports', () => 
 });
 test('gate drops uninterpretable reports and enforces the five minute future rule', () => {
   const b=browser(), now=Date.now();
-  for(const r of [null,3,[],{}, {...checkReport,host:''},{...checkReport,host:' '},{...checkReport,sections:{}},{...checkReport,checkedAt:'bad'},{...checkReport,checkedAt:new Date(now+360000).toISOString()}]) assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify(r)+','+now+')'),null);
+  for(const r of [null,3,[],{}, {...checkReport,host:''},{...checkReport,host:' '},{...checkReport,sections:null},{...checkReport,checkedAt:'bad'},{...checkReport,checkedAt:new Date(now+360000).toISOString()}]) assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify(r)+','+now+')'),null);
   assert.ok(evaluate(b,'sanitizeReport('+JSON.stringify({...checkReport,checkedAt:new Date(now+240000).toISOString()})+','+now+')'));
 });
 test('gate normalizes fleet and history, keeps last duplicate and boots malformed legacy exports', () => {
@@ -966,10 +966,10 @@ test('gate repair matrix preserves valid fields and flags only actual changes', 
   }
   for(const ports of [undefined,null,{},'absent']) {
     const r={...valid,ports}; evaluate(b,'storageRepaired=false');
-    assert.equal(evaluate(b,'JSON.stringify(sanitizeReport('+JSON.stringify(r)+').ports)'),JSON.stringify(ports));
-    assert.equal(evaluate(b,'storageRepaired'),false);
+    assert.equal(evaluate(b,'JSON.stringify(sanitizeReport('+JSON.stringify(r)+').ports)'),undefined);
+    assert.equal(evaluate(b,'storageRepaired'),ports !== undefined);
   }
-  for(const section of [null,3,{}, {line:'fine'}, {level:'ok'}]) {
+  for(const section of [null,3,{}, {level:'ok'}]) {
     const r={...valid,sections:{...valid.sections,sync:section,ports:section}};
     assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify(r)+').sections.sync.line'),'Unknown');
   }
@@ -984,4 +984,114 @@ test('fresh response gate repairs optional fields and retains a live future resp
     const b=browser({checkResponse:r});await runCheck(b);
     assert.equal(evaluate(b,'history.length'),1);assert.equal(evaluate(b,'lastReport.checkedAt'),checkedAt);
   }
+});
+
+test('E1 malformed status and fixes boot, render, share and prove without undefined', async () => {
+  const variants = [
+    {status:'broken'}, {status:{}}, {status:{level:'bad'}}, {status:null}, {status:false},
+    {fixes:[{title:'Repair'}]}, {fixes:[{title:'Repair',why:42}]},
+    {status:{level:'error',line:'Unknown state'}},
+  ];
+  for (const variant of variants) {
+    const r=observed('a','2026-11-20T12:00:00Z',100,'bad');
+    if ('status' in variant) r.sections={...r.sections,status:variant.status};
+    if (variant.fixes) r.fixes=variant.fixes;
+    const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+    const drawn=[], blobs=[]; const create=b.context.document.createElement;
+    b.context.document.createElement=tag=>{const el=create(tag);el.click=()=>{};
+      if(tag==='canvas'){el.getContext=()=>({fillRect(){},fillText(text){drawn.push(text);}});el.toBlob=cb=>cb({});}return el;};
+    b.context.File=class {};b.context.Blob=class {constructor(parts){blobs.push(parts.join(''));}};
+    b.context.navigator={};b.context.URL={createObjectURL:()=> 'blob:fixture',revokeObjectURL(){}};
+    await b.element('share-card').click();b.element('proof-download').click();
+    const output=['check-node','report-history','fixes','score-value'].map(id=>b.element(id).textContent).join(' ');
+    assert.doesNotMatch(output+drawn.join(' ')+blobs.join(' ')+evaluate(b,'proofText(lastReport)'),/undefined/);
+    assert.ok(drawn.length); assert.ok(blobs.length);
+    if (variant.fixes) assert.equal(b.element('fixes').textContent,'Repair');
+    if (variant.status?.level==='error') assert.equal(evaluate(b,'lastReport.sections.status.level'),'');
+    if (typeof variant.status==='string' || variant.status && !variant.status.line) assert.equal(b.element('check-node').textContent,'Unknown');
+  }
+});
+
+test('E3 history syncGap 100 governs divergent lastReport syncGap 0 before rendering', () => {
+  const record=observed('a','2026-11-20T12:00:00Z',100,'ok');
+  const storage=new Map([['nhr:history',JSON.stringify([record])],['nhr:lastReport',JSON.stringify({...record,syncGap:0})]]);
+  const b=browser({storage});
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.match(b.element('score-value').textContent,/80 of 100/);
+  assert.equal(evaluate(b,'scoreFor(latestFor("a")).value'),80);
+  assert.match(b.element('fleet-list').textContent,/80/);
+  assert.doesNotMatch(evaluate(b,'cardLines(lastReport).join(" ")'),/100 of 100/);
+});
+
+function boundaryClock(b, initial) {
+  let now=initial, id=0; const timers=new Map();
+  b.context.Date=class extends Date {constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
+  b.context.setTimeout=(callback,delay)=>{timers.set(++id,{callback,delay,at:now+delay});return id;};
+  b.context.clearTimeout=id=>timers.delete(id);
+  return {timers, async fire(id){const timer=timers.get(id);assert.ok(timer);timers.delete(id);now=timer.at;const result=timer.callback();await flush();return result;}};
+}
+
+test('E4 manual 429 then check-all 429 shares the retry and stamps the waiting run', async () => {
+  const b=fleetBrowser(1), clock=boundaryClock(b,Date.parse('2026-11-20T12:00:00Z')); let attempts=0;
+  b.context.fetch=async()=>{const success=++attempts>2;return {ok:success,json:async()=>success?observed('0.example','2026-11-20T12:02:00Z',0,'ok'):{error:'check_too_frequent'}};};
+  await evaluate(b,'performCheck(fleet[0])');
+  const retryId=evaluate(b,'queuedTimers.get(fleet[0].host)');
+  const run=b.element('check-all').click();await flush();
+  await clock.fire([...clock.timers.keys()].find(id=>id!==retryId));await run;
+  assert.equal(attempts,2);assert.equal(evaluate(b,'retryWaiters.get(fleet[0].host).size'),1);
+  const retry=clock.fire(evaluate(b,'queuedTimers.get(fleet[0].host)'));await flush();
+  await clock.fire([...clock.timers.keys()][0]);await retry;
+  assert.equal(attempts,3);assert.equal(evaluate(b,'activeRun'),null);assert.ok(evaluate(b,'lastCheckAll'));
+});
+
+test('E4 entitlement abort cancels node 1 queued retry and prevents zombie checks', async () => {
+  const b=fleetBrowser(2), clock=boundaryClock(b,Date.parse('2026-11-20T12:00:00Z'));let attempts=0;
+  b.context.fetch=async()=>({ok:false,json:async()=>({error:++attempts===1?'check_too_frequent':'no_completed_check'})});
+  const run=b.element('check-all').click();await flush();
+  const retryId=evaluate(b,'queuedTimers.get(fleet[0].host)');
+  const paceId=[...clock.timers.keys()].find(id=>id!==retryId);
+  await clock.fire(paceId);await run;
+  assert.equal(evaluate(b,'activeRun'),null);assert.equal(evaluate(b,'queuedTimers.size'),0);
+  assert.equal(clock.timers.has(retryId),false);assert.equal(evaluate(b,'progress.size'),0);
+  assert.match(b.element('fleet-progress').textContent,/could not be completed/);
+  for(const id of [...clock.timers.keys()]) await clock.fire(id);
+  assert.equal(attempts,2);assert.equal(evaluate(b,'lastCheckAll'),null);
+});
+
+test('E5 hidden filtered fleet still schedules freshness', () => {
+  const b=browser(), now=Date.parse('2026-11-21T12:00:00Z'), clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now-86400000+1000).toISOString(),0,'ok');
+  evaluate(b,'history=['+JSON.stringify(r)+'];fleet=[{host:"a",label:"A"}];setFleetFilter("attention")');
+  assert.equal(b.element('fleet-list').children[0].children[0].textContent,'No nodes match');
+  assert.equal([...clock.timers.values()][0].delay,1050);
+});
+
+test('E6 live repair and ten-minute server clock skew store sanitized reports without load hint', async () => {
+  for(const ahead of [0,600000]) {
+    const r={...observed('example.com',new Date(Date.now()+ahead).toISOString(),0,'ok'),fixes:[{title:'Repair',why:3}],ports:{}};
+    const storage=new Map(), b=browser({storage,checkResponse:r});await runCheck(b);
+    assert.equal(evaluate(b,'lastReport.checkedAt'),r.checkedAt);
+    assert.equal(evaluate(b,'lastReport.fixes[0].why'),'');assert.equal(evaluate(b,'"ports" in lastReport'),false);
+    assert.equal(b.element('storage-repaired').hidden,true);assert.equal(evaluate(b,'storageRepaired'),false);
+    assert.equal(JSON.parse(storage.get('nhr:lastReport')).fixes[0].why,'');
+  }
+});
+
+test('E6 uninterpretable live response fails the run and stores nothing', async () => {
+  const b=fleetBrowser(1);b.context.fetch=async()=>({ok:true,json:async()=>({host:'0.example',checkedAt:'invalid'})});
+  await b.element('check-all').click();
+  assert.equal(b.element('check-result').textContent,'We could not run your check. Please try again.');
+  assert.equal(evaluate(b,'history.length'),0);assert.equal(evaluate(b,'lastReport'),null);
+  assert.equal(evaluate(b,'lastCheckAll'),null);assert.equal(evaluate(b,'activeRun'),null);
+  assert.equal(evaluate(b,'localStorage.getItem(REPORT_KEY)'),null);assert.equal(evaluate(b,'storageRepaired'),false);
+});
+
+test('E7 gate-legal four-minute future report crosses stale at its true boundary', async () => {
+  const b=browser(),now=Date.parse('2026-11-21T12:00:00Z'),clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now+240000).toISOString(),0,'ok');
+  evaluate(b,'history=[sanitizeReport('+JSON.stringify(r)+')];fleet=[{host:"a",label:"A"}];renderFleet()');
+  const [id,timer]=[...clock.timers.entries()][0];assert.equal(timer.delay,86400000+240000+50);
+  assert.doesNotMatch(b.element('fleet-list').textContent,/STALE/);
+  await clock.fire(id);
+  assert.match(b.element('fleet-list').textContent,/STALE/);
 });

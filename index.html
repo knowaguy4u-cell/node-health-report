@@ -521,14 +521,15 @@
 
   let storageRepaired = false;
   const normalizeHost = host => host.trim().toLowerCase().replace(/\.$/, '');
-  function sanitizeReport(r, now = Date.now()) {
-    const drop = () => { storageRepaired = true; return null; };
-    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.host !== 'string' || !normalizeHost(r.host) || !r.sections?.status || !Number.isFinite(Date.parse(r.checkedAt)) || Date.parse(r.checkedAt) > now + 300000) return drop();
+  function sanitizeReport(r, now = Date.now(), options = {}) {
+    const drop = () => { if (!options.live) storageRepaired = true; return null; };
+    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.host !== 'string' || !normalizeHost(r.host) || !r.sections || typeof r.sections !== 'object' || Array.isArray(r.sections) || !Number.isFinite(Date.parse(r.checkedAt)) || Date.parse(r.checkedAt) > now + 300000) return drop();
     const clean = { ...r, host: normalizeHost(r.host), sections: { ...r.sections } };
-    clean.fixes = Array.isArray(r.fixes) ? r.fixes.filter(f => f && typeof f === 'object' && typeof f.title === 'string') : [];
-    for (const key of ['sync', 'ports']) {
+    clean.fixes = Array.isArray(r.fixes) ? r.fixes.filter(f => f && typeof f === 'object' && typeof f.title === 'string').map(f => ({ ...f, why: typeof f.why === 'string' ? f.why : '', how: typeof f.how === 'string' ? f.how : '' })) : [];
+    for (const key of ['status', 'sync', 'ports']) {
       const section = clean.sections[key];
-      if (!section || typeof section !== 'object' || typeof section.line !== 'string' || typeof section.level !== 'string') clean.sections[key] = { level: '', line: 'Unknown' };
+      if (!section || typeof section !== 'object' || Array.isArray(section) || typeof section.line !== 'string') clean.sections[key] = { level: '', line: 'Unknown' };
+      else clean.sections[key] = { ...section, level: ['ok', 'warn', 'bad'].includes(section.level) ? section.level : '' };
     }
     if (Array.isArray(r.ports)) {
       const ports = new Map(), conflicts = new Set();
@@ -539,9 +540,10 @@
       }
       clean.ports = [...ports.values()].filter(row => !conflicts.has(row.port));
     }
+    if ('ports' in r && !Array.isArray(r.ports)) delete clean.ports;
     if ('syncGap' in r && (!Number.isInteger(r.syncGap) || r.syncGap < 0)) clean.syncGap = null;
     if ('portsOpen' in r && (!Number.isInteger(r.portsOpen) || r.portsOpen < 0 || r.portsOpen > 10)) clean.portsOpen = null;
-    if (JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;
+    if (!options.live && JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;
     return clean;
   }
   const FLEET_KEY = 'nhr:fleet';
@@ -568,10 +570,14 @@
   try {
     const saved = JSON.parse(localStorage.getItem(REPORT_KEY));
     if (saved !== null) lastReport = sanitizeReport(saved);
-    if (lastReport) renderCheck(lastReport);
   } catch {}
 
-  if (lastReport?.sections?.status && !history.some(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt)) history.push(lastReport);
+  if (lastReport) {
+    const canonical = history.find(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt);
+    if (canonical) lastReport = canonical;
+    else history.push(lastReport);
+    renderCheck(lastReport);
+  }
   let fleet = readStored(FLEET_KEY, []);
   if (!Array.isArray(fleet)) { fleet = []; storageRepaired = true; }
   const seenHosts = new Set();
@@ -886,7 +892,7 @@
     ]);
     const ranked = reports.filter(r => r.sections.status.level !== 'ok').flatMap(r => r.fixes.map(fix => ({ fix, report: r, priority: r.sections.status.level === 'bad' ? 0 : 1 }))).sort((a,b) => a.priority - b.priority || Number(b.report.portsOpen === 0) - Number(a.report.portsOpen === 0) || (b.report.syncGap ?? -Infinity) - (a.report.syncGap ?? -Infinity));
     const fixes = document.getElementById('fixes'); fixes.textContent = '';
-    if (ranked.length) { const f = ranked[0].fix; append(fixes, 'li', f.title + '. ' + f.why + ' ' + f.how); }
+    if (ranked.length) { const f = ranked[0].fix; append(fixes, 'li', [f.title, f.why, f.how].filter(Boolean).join('. ')); }
     document.getElementById('fixes-panel').hidden = !ranked.length;
     document.getElementById('check-all').disabled = checkingAll || !fleet.length;
     scheduleFreshness();
@@ -899,10 +905,10 @@
     if (freshnessTimer !== null && typeof clearTimeout === 'function') clearTimeout(freshnessTimer);
     freshnessTimer = null;
     if (typeof setTimeout !== 'function') return;
-    const reports = visibleFleet().map(n => latestFor(n.host));
+    const reports = fleet.map(n => latestFor(n.host));
     if (report && !document.getElementById('report').hidden) reports.push(report);
     const now = Date.now();
-    const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0 && delay <= STALE_AFTER_MS);
+    const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0 && delay <= STALE_AFTER_MS + 300000);
     if (delays.length) freshnessTimer = setTimeout(refreshFreshness, Math.min(...delays) + 50);
   }
   document.addEventListener?.('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFreshness(); });
@@ -920,6 +926,17 @@
     document.getElementById('check-result').textContent = addNode() ? 'Node added. Run a check when ready.' : 'Enter a valid public hostname or IP address for your node.';
   });
   const queuedTimers = new Map();
+  const retryWaiters = new Map();
+  function completeHost(host, run, reason = null) {
+    const waiters = retryWaiters.get(host) || new Set();
+    retryWaiters.delete(host);
+    if (run) waiters.add(run);
+    if (queuedTimers.has(host)) {
+      if (typeof clearTimeout === 'function') clearTimeout(queuedTimers.get(host));
+      queuedTimers.delete(host);
+    }
+    for (const waiter of waiters) completeCheckAll(host, waiter, reason);
+  }
   let checkChain = Promise.resolve();
   let nextAttemptAt = 0;
   function queueCopy(host) {
@@ -942,6 +959,10 @@
     return task;
   }
   async function performCheck(node, nodeLedger = null, run = null) {
+    if (run && queuedTimers.has(node.host)) {
+      if (!retryWaiters.has(node.host)) retryWaiters.set(node.host, new Set());
+      retryWaiters.get(node.host).add(run);
+    }
     progress.set(node.host, 'CHECKING'); renderFleet();
     const resultLine = document.getElementById('check-result');
     try {
@@ -953,10 +974,18 @@
       });
       nextAttemptAt = Date.now() + 61000;
       const raw = await response.json();
-      const value = response.ok ? (sanitizeReport(raw) || raw) : raw;
+      const value = response.ok ? sanitizeReport(raw, Date.parse(raw?.checkedAt) || Date.now(), { live: true }) : raw;
+      if (response.ok && !value) {
+        progress.delete(node.host);
+        resultLine.textContent = 'We could not run your check. Please try again.';
+        completeHost(node.host, run, resultLine.textContent);
+        return;
+      }
       if (!response.ok) {
         if (value.error === 'check_too_frequent') {
           progress.set(node.host, 'CHECK QUEUED');
+          if (!retryWaiters.has(node.host)) retryWaiters.set(node.host, new Set());
+          if (run) retryWaiters.get(node.host).add(run);
           if (typeof setTimeout === 'function' && !queuedTimers.has(node.host)) queuedTimers.set(node.host, setTimeout(async () => {
             queuedTimers.delete(node.host);
             if (fleet.some(n => n.host === node.host)) await checkNode(node, nodeLedger, {}, run);
@@ -966,14 +995,14 @@
           progress.delete(node.host);
           const errors = { no_completed_check: 'Buy the full health check first — it is 1 Test-Pi', invalid_host: 'Enter a valid public hostname or IP address for your node.', invalid_nodeLedger: 'Enter a whole, non-negative ledger number.', horizon_unavailable: 'Pi network data is temporarily unavailable. Please try again in a moment.', invalid_horizon_response: 'Pi network data is temporarily unavailable. Please try again in a moment.', horizon_request_failed: 'Pi network data is temporarily unavailable. Please try again in a moment.' };
           resultLine.textContent = errors[value.error] || 'We could not run your check. Please try again.';
-          completeCheckAll(node.host, run, resultLine.textContent);
+          completeHost(node.host, run, resultLine.textContent);
         }
         return value.error;
       }
-      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeCheckAll(node.host, run); renderReportExtras(value); persistFleet();
+      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeHost(node.host, run); renderReportExtras(value); persistFleet();
       try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
       resultLine.textContent = value.sections.status.line;
-    } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; completeCheckAll(node.host, run, resultLine.textContent); }
+    } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; completeHost(node.host, run, resultLine.textContent); }
     finally { renderFleet(); }
   }
   document.getElementById('run-form').addEventListener('submit', async event => {
@@ -996,6 +1025,13 @@
         const error = await checkNode(node, null, { label }, run);
         if (['missing_access_token', 'invalid_access_token', 'no_completed_check'].includes(error)) {
           if (activeRun === run) {
+            for (const host of run.pending) {
+              if (queuedTimers.has(host)) {
+                if (typeof clearTimeout === 'function') clearTimeout(queuedTimers.get(host));
+                queuedTimers.delete(host);
+              }
+              retryWaiters.delete(host); progress.delete(host);
+            }
             run.failed += run.pending.size; run.pending.clear();
             finishRun(run);
           }

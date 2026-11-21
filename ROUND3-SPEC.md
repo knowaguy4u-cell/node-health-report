@@ -96,6 +96,12 @@ before rendering. A checkedAt or last check-all timestamp more than five minutes
 in the future is rejected; a timestamp up to five minutes ahead is retained.
 Fresh check responses use the gate for repair only so a live check is never lost.
 
+For a shared (host, checkedAt), the sanitized history copy is canonical and
+replaces lastReport before rendering; history is the record and lastReport is a
+view cache. Live responses use the same gate with the server checkedAt as its
+clock and `{ live: true }`: repairs never set the load-only storageRepaired flag,
+and uninterpretable responses fail without storing unsanitized data.
+
 ## Known tensions
 
 B8 grammar: the strip says "1 needs a look" and "N need a look" for every other
