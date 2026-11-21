@@ -28,7 +28,7 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
       let path = `/accounts/${encodeURIComponent(app)}/operations?order=desc&limit=200`;
       for (let page = 0; page < 3 && path; page++) {
         const operations = await json(path);
-        for (const op of operations._embedded.records) {
+        for (const op of operations._embedded?.records || []) {
           if (op.type !== 'payment' || op.from !== app || op.to !== recipient ||
               op.asset_type !== 'native' || Number(op.amount) !== Number(amount)) continue;
           const tx = await json(`/transactions/${encodeURIComponent(op.transaction_hash)}`);
@@ -39,6 +39,36 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
         path = url ? url.pathname + url.search : null;
       }
       return payments;
+    },
+    async findPaymentsFrom(sender, amount) {
+      const seed = typeof env.PI_WALLET_SEED === 'string' ? env.PI_WALLET_SEED.trim() : env.PI_WALLET_SEED;
+      if (!seed) throw new HttpError(503, 'server_not_configured');
+      let app;
+      try { app = require('@stellar/stellar-sdk').Keypair.fromSecret(seed).publicKey(); }
+      catch { throw new HttpError(503, 'transaction_build_failed'); }
+      const payments = [];
+      let path = `/accounts/${encodeURIComponent(app)}/operations?order=desc&limit=200`;
+      for (let page = 0; page < 3 && path; page++) {
+        const operations = await json(path);
+        for (const op of operations._embedded?.records || []) {
+          if (op.type !== 'payment' || op.from !== sender || op.to !== app ||
+              op.asset_type !== 'native' || Number(op.amount) !== Number(amount)) continue;
+          const tx = await json(`/transactions/${encodeURIComponent(op.transaction_hash)}`);
+          if (tx.successful === true) payments.push({ txid: tx.hash, memo: tx.memo });
+        }
+        const next = operations._links?.next?.href;
+        const url = next ? new URL(next) : null;
+        path = url ? url.pathname + url.search : null;
+      }
+      return payments;
+    },
+    async latestLedger() {
+      const data = await json('/ledgers?order=desc&limit=1');
+      const record = data._embedded?.records?.[0];
+      if (!Number.isSafeInteger(record?.sequence) || !Number.isSafeInteger(record?.protocol_version)) {
+        throw new HttpError(502, 'invalid_horizon_response');
+      }
+      return { sequence: record.sequence, protocolVersion: record.protocol_version };
     },
     async prepare(payment) {
       const seed = typeof env.PI_WALLET_SEED === 'string' ? env.PI_WALLET_SEED.trim() : env.PI_WALLET_SEED;

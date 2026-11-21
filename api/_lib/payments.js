@@ -101,6 +101,7 @@ function createPayments({ pi, store, ledger, network = networkConfig().name }) {
     return fulfill(payment);
   }
   return {
+    identify, validate, recipientFromCompletedPurchase,
     async approve({ paymentId, accessToken }) {
       const id = requireString(paymentId, 'paymentId');
       const user = await identify(accessToken);

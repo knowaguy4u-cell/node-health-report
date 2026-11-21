@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const html = readFileSync(require.resolve('../index.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-function browser({ incomplete = false, fail = false, storage = new Map() } = {}) {
+function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -36,6 +36,10 @@ function browser({ incomplete = false, fail = false, storage = new Map() } = {})
   const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: () => ({}) },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
+      if (url.endsWith('/api/check')) {
+        if (networkFailure) throw new Error('fixture network failure');
+        return { ok: !checkError, json: async () => checkError ? { error: checkError } : checkResponse };
+      }
       return { ok: !fail, json: async () => fail ? { error: 'missing_scope' } : { status: 'completed', healthCheck: 'fulfilled' } };
     },
   });
@@ -107,4 +111,81 @@ test('frontend remembers the purchase across a reload for the payout body', asyn
   await b.element('signin').click();
   await b.element('payout').click();
   assert.deepEqual(JSON.parse(b.calls[0].body), { purchasePaymentId: 'fixture-payment' });
+});
+
+const checkReport = {
+  host: 'example.com', checkedAt: '2026-11-20T12:00:00.000Z',
+  sections: { status: { level: 'ok', line: 'Your node looks healthy' },
+    sync: { level: 'ok', line: 'Your node is 0 ledgers behind the network' },
+    ports: { level: 'ok', line: 'All 10 node ports are open' } },
+  fixes: [{ title: 'Nothing to fix — run this check weekly', why: 'Healthy.', how: 'Check weekly.' }],
+};
+
+async function runCheck(b) {
+  b.element('own-node').checked = true;
+  b.element('node-host').value = 'example.com';
+  b.element('node-ledger').value = '100';
+  await b.element('run-form').submit({ preventDefault() {} });
+}
+
+test('frontend reveals check after payment, renders results and restores saved history', async () => {
+  const storage = new Map();
+  const b = browser({ storage, checkResponse: checkReport });
+  await b.element('signin').click();
+  assert.equal(b.element('run-panel').hidden, true);
+  await b.element('health-check').click();
+  await b.callbacks.onReadyForServerCompletion('fixture-payment', 'fixture-tx');
+  assert.equal(b.element('run-panel').hidden, false);
+  await runCheck(b);
+  const call = b.calls.at(-1);
+  assert.equal(call.url, 'https://node-health-report.vercel.app/api/check');
+  assert.equal(call.headers.Authorization, 'Bearer fixture-access-token');
+  assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100 });
+  assert.equal(b.element('check-node').textContent, checkReport.sections.status.line);
+  assert.equal(b.element('check-sync').textContent, checkReport.sections.sync.line);
+  assert.equal(b.element('check-ports').textContent, checkReport.sections.ports.line);
+  assert.match(b.element('fixes').children.at(-1).textContent, /weekly/);
+  const reloaded = browser({ storage });
+  assert.match(reloaded.element('report-history').textContent, /example.com/);
+  assert.equal(reloaded.element('check-node').textContent, checkReport.sections.status.line);
+  assert.doesNotMatch(storage.get('nhr:lastReport'), /fixture-access-token/);
+});
+
+for (const [checkError, expected] of [
+  ['no_completed_check', /Buy the full health check first/],
+  ['check_too_frequent', /60 seconds/], ['invalid_host', /valid public hostname/],
+]) {
+  test(`frontend explains ${checkError}`, async () => {
+    const b = browser({ checkError }); await b.element('signin').click();
+    await runCheck(b);
+    assert.match(b.element('check-result').textContent, expected);
+    assert.equal(b.element('run-check').disabled, false);
+  });
+}
+
+test('frontend explains network failures and requires node ownership', async () => {
+  const b = browser({ networkFailure: true }); await b.element('signin').click();
+  await b.element('run-form').submit({ preventDefault() {} });
+  assert.equal(b.calls.length, 0);
+  await runCheck(b);
+  assert.match(b.element('check-result').textContent, /Check your connection/);
+});
+
+test('frontend reveals check panel on sign-in when purchase is already remembered', async () => {
+  const storage = new Map([['nhr:lastPurchasePaymentId', 'previous-payment']]);
+  const b = browser({ storage });
+  await b.element('signin').click();
+  assert.equal(b.element('run-panel').hidden, false);
+  assert.equal(b.element('report-ready').hidden, false);
+});
+
+test('frontend trims whitespace from node host input', async () => {
+  const b = browser({ checkResponse: checkReport });
+  await b.element('signin').click();
+  b.element('own-node').checked = true;
+  b.element('node-host').value = '  example.com  ';
+  b.element('node-ledger').value = ' 100 ';
+  await b.element('run-form').submit({ preventDefault() {} });
+  const call = b.calls.at(-1);
+  assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100 });
 });

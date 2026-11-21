@@ -36,6 +36,8 @@
   #status-history { padding-left: 1.3rem; overflow-wrap: anywhere; }
   #status-history li { margin-bottom: .5rem; }
   footer { text-align: center; margin-top: 2rem; }
+  input:not([type="checkbox"]) { width: 100%; min-height: 44px; font: inherit; margin-bottom: 1rem; }
+  #fixes li { margin-bottom: 1rem; }
   [hidden] { display: none !important; }
   @media (min-width: 36rem) { body { padding-top: 3rem; } .checks span { float: right; } }
 </style>
@@ -58,7 +60,7 @@
     <p id="auth-status">Not signed in yet. <strong id="username"></strong></p>
     <button id="signin">Sign in with Pi</button>
   </section>
-  <section class="card" id="report" aria-labelledby="report-title">
+  <section class="card" id="report" aria-labelledby="report-title" aria-live="polite">
     <h2 id="report-title">Your node report</h2>
     <p>What you'll get: a full health check covering your node’s status, blockchain sync, and ports and connectivity.</p>
     <ul class="checks">
@@ -69,13 +71,29 @@
     <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
     <p><button id="health-check" disabled>Run full health check — 1 Test-Pi</button></p>
     <p id="check-hint" class="hint">Sign in above to run your health check.</p>
+    <section id="run-panel" hidden aria-labelledby="run-title">
+      <h3 id="run-title">Run your health check</h3>
+      <p class="hint">Your node must be publicly reachable. Private addresses usually cannot be reached from this server.</p>
+      <form id="run-form">
+        <label for="node-host">Your node's public address</label>
+        <input id="node-host" type="text" required autocomplete="off">
+        <label for="node-ledger">Your node's current ledger (optional)</label>
+        <input id="node-ledger" type="number" min="0" step="1">
+        <p><input id="own-node" type="checkbox" required> <label for="own-node">This is my node</label></p>
+        <button id="run-check" type="submit">Run</button>
+      </form>
+      <p id="check-result" role="status" aria-live="polite"></p>
+    </section>
     <h3>Try a test payout</h3>
     <button id="payout" aria-describedby="payout-hint" disabled>Send test payout — 0.5 Test-Pi</button>
     <p id="payout-hint" class="hint">Available after your health check is complete.</p>
     <div id="payment-status" class="status-area" role="status" aria-live="polite">
       <p id="latest-status" class="status-banner info">Sign in to get started. Your full health check costs 1 Test-Pi.</p>
-      <details><summary>Details</summary><ol id="status-history"></ol></details>
+      <details><summary>Details</summary><ol id="status-history"></ol><p id="report-history"></p></details>
     </div>
+  </section>
+  <section id="fixes-panel" class="card" hidden aria-live="polite">
+    <h2>What to fix first</h2><ol id="fixes"></ol>
   </section>
 </main>
 <footer>Built by TMT Productions for the Pi Next hackathon.</footer>
@@ -113,6 +131,7 @@
   let purchaseCompleted = false;
 
   function updateProgress() {
+    document.getElementById('run-panel').hidden = !(signedIn && purchaseCompleted);
     const stage = purchaseCompleted ? 2 : signedIn ? 1 : 0;
     ['step-signin', 'step-check', 'step-payout'].forEach((id, index) => {
       const step = document.getElementById(id);
@@ -130,17 +149,83 @@
     purchaseCompleted = true;
     ['check-node', 'check-sync', 'check-ports'].forEach(id => {
       const row = document.getElementById(id);
-      row.textContent = 'Check complete — ready to view';
-      row.className = 'ok';
+      if (!lastReport) {
+        row.textContent = 'Check unlocked — ready to run';
+        row.className = 'ok';
+      }
     });
     document.getElementById('report-ready').hidden = false;
     updateProgress();
+    if (lastReport) renderCheck(lastReport);
   }
 
   function setHealthWorking(working) {
     healthCheck.disabled = working;
     healthCheck.textContent = working ? 'Working…' : 'Run full health check — 1 Test-Pi';
   }
+
+  const REPORT_KEY = 'nhr:lastReport';
+  let lastReport = null;
+
+  function renderCheck(value) {
+    if (!value || !value.sections || !Array.isArray(value.fixes)) return;
+    [['check-node', 'status'], ['check-sync', 'sync'], ['check-ports', 'ports']].forEach(([id, section]) => {
+      const row = document.getElementById(id);
+      row.textContent = value.sections[section].line;
+      row.className = value.sections[section].level;
+    });
+    const list = document.getElementById('fixes');
+    list.textContent = '';
+    value.fixes.forEach(fix => {
+      const item = document.createElement('li');
+      item.textContent = fix.title + '. ' + fix.why + ' ' + fix.how;
+      list.appendChild(item);
+    });
+    document.getElementById('fixes-panel').hidden = false;
+    document.getElementById('report-history').textContent = 'Last check: ' + value.checkedAt + ' — ' + value.host + '. ' + value.sections.status.line;
+  }
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(REPORT_KEY));
+    renderCheck(saved);
+    lastReport = saved;
+  } catch {}
+
+  document.getElementById('run-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!document.getElementById('own-node').checked) return;
+    const button = document.getElementById('run-check');
+    const resultLine = document.getElementById('check-result');
+    button.disabled = true;
+    resultLine.textContent = 'Checking your node…';
+    try {
+      const hostInput = document.getElementById('node-host').value.trim();
+      const ledgerInput = document.getElementById('node-ledger').value.trim();
+      const response = await fetch(API_BASE + '/api/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
+        body: JSON.stringify({ host: hostInput, nodeLedger: ledgerInput === '' ? null : Number(ledgerInput) }),
+      });
+      const value = await response.json();
+      if (!response.ok) {
+        const errors = {
+          no_completed_check: 'Buy the full health check first — it is 1 Test-Pi',
+          check_too_frequent: 'Wait 60 seconds between checks, then try again.',
+          invalid_host: 'Enter a valid public hostname or IP address for your node.',
+          invalid_nodeLedger: 'Enter a whole, non-negative ledger number.',
+          horizon_unavailable: 'Pi network data is temporarily unavailable. Please try again in a moment.',
+        };
+        resultLine.textContent = errors[value.error] || 'We could not run your check. Please try again.';
+        return;
+      }
+      renderCheck(value);
+      lastReport = value;
+      try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
+      resultLine.textContent = value.sections.status.line;
+    } catch {
+      resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.';
+    } finally { button.disabled = false; }
+  });
 
   loadStoredPurchaseId();
   updateProgress();
@@ -208,6 +293,7 @@
       status.className = 'ok';
       username.textContent = auth.user.username;
       document.getElementById('report').hidden = false;
+      if (lastPurchasePaymentId) unlockReport();
       for (const payment of incompletePayments.splice(0)) await resumePayment(payment);
     } catch {
       status.textContent = 'Sign-in failed. Please try again in Pi Browser.';
