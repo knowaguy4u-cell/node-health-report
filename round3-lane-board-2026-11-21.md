@@ -2810,3 +2810,313 @@ All other rulings stand as agreed in cycle 4 and reopen only with a reproduction
 4. **Professional standard** — name one miss and one hit in another lane's cycle-4 work, or Nova's, by name.
 
 Convergence bar: every available lane AGREEs on R15′ and V1; no lane raises a NEW material defect that Nova can reproduce; the full suite is green on Nova's run. Parked candidates remain parked unless you reproduce a material defect on a valid path.
+
+---
+
+# CYCLE 5 — Codex's response (verbatim)
+
+**AGREE on R15′ and V1. I found no new material defect; this lane supports convergence.**
+
+Reviewed live checkout at commit `df9dda6d164988a62bd2d4f7a055b05b57770700`. Both SHA-256 hashes match the Cycle 5 brief:
+
+```text
+index.html
+9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47
+
+test/frontend.test.js
+37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64
+```
+
+My `npm test` run: **230 passed, 0 failed, 1 skipped, 231 total**. The sandbox prohibits the skipped TCP-listener test. All 100 frontend tests, including G1(a)–(e), passed. Nova’s separate unrestricted result remains **231/231**. No files were changed.
+
+**1. Verdict table**
+
+| Ruling | Verdict | File/line evidence |
+|---|---|---|
+| **R15′ — canonical timestamp identity; last arrival wins; distinct-check threshold** | **AGREE** | The [gate](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:526) requires a string timestamp and rejects non-finite parses; line 528 converts accepted timestamps to UTC ISO before downstream use. [Upsert](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:567) replaces the existing canonical key and appends the arriving report. Stored history passes through that gate and upsert at lines 575–579; [live success](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:1013) uses the same upsert. [Best-so-far](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:622) requires two scored observations after deduplication. G1(a)–(e), beginning at [test line 1197](/home/hatch/workspace/swarm/pi-build/node-health-report/test/frontend.test.js:1197), pass. |
+| **V1 — current timestamp in final-node removal fixture** | **AGREE** | The [test](/home/hatch/workspace/swarm/pi-build/node-health-report/test/frontend.test.js:370) now creates a fresh report, invokes removal, reloads, and still asserts `fleet.length === 0` and `history.length === 1`. The commit changes this fixture’s timestamp without changing its assertions or product behavior. The [24-hour freshness rule](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:641) remains intact, with stale rendering and boundary tests still passing. |
+
+V1 preserves the test’s stated intent: removing the final node persists without deleting its historical observation. It avoids an unrelated stale-note insertion changing the positional button lookup. It does not weaken a product rule.
+
+**2. Attack on the current build**
+
+I exercised additional probes in memory using the existing frontend harness and reviewed the corresponding rendering paths.
+
+- **Canonical identity:** Loaded four conflicting reports for `" EXAMPLE.COM. "` using `.000Z`, `Z`, `-06:00`, and `+01:00` spellings of the same instant. Their successive sync gaps were `0`, `100`, `200`, and `300`. Result:
+
+  ```text
+  history.length = 1
+  host = "example.com"
+  checkedAt = "2026-11-20T12:00:00.000Z"
+  syncGap = 300
+  bestFor("example.com") = null
+  ```
+
+  The last arrival wins without manufacturing a second check. Passing G1 tests additionally cover non-string rejection, live alias replacement, canonical spelling preservation, and reload consistency.
+
+- **Host binding:** Returned a valid `other.example` report to an `example.com` request. Result:
+
+  ```text
+  history.length = 0
+  lastReport = null
+  REPORT_KEY = null
+  ```
+
+  Returning `" EXAMPLE.COM. "` instead succeeded as `example.com`. The [binding check](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:989) precedes successful report mutation. The passing F2 regression also verifies preservation of an existing observation and report storage on mismatch.
+
+- **Freshness:** With a controlled clock, rendered a report exactly 24 hours old. The initial timeout was **50 ms**; firing it produced `STALE`. This confirms the strict boundary and scheduler cooperate at equality. Passing E5, E7, and F3 tests cover filtered fleets, future accepted timestamps, ten-minute live skew, and browser timeout-cap recomputation. The relevant [scheduler](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:915) still considers all fleet reports.
+
+- **Repair:** Loaded an interpretable report with `sections.status = {}` and a fix containing numeric `why`. It retained one observation, repaired status to `{level:"", line:"Unknown"}`, repaired `why`/`how` to empty strings, and set `storageRepaired = true`. Proof output contained `Unknown`. Malformed-envelope rejection and live repair-hint suppression also pass their regressions.
+
+- **Rendering:** Included an HTML-looking fix title, `<img src=x onerror=alert(1)>`. It remained a string through repair. The relevant [DOM append helper](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:795) assigns `textContent`; report-number rendering uses that helper. Share cards use [canvas `fillText`](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:713), and proof downloads use plain text. Existing E1 tests exercised malformed sections/fixes through screen, share, and proof outputs without `undefined`.
+
+**I could not break the current build in these attacks.** Rendering verification used the mock DOM and source inspection; I did not perform a real-browser visual inspection.
+
+**3. One level deeper**
+
+**Rank: weakness — the final-node removal test still identifies its action by child position.**
+
+At [test line 374](/home/hatch/workspace/swarm/pi-build/node-health-report/test/frontend.test.js:374), removal uses:
+
+```js
+b.element('fleet-list').children.at(-1).children[3].onclick();
+```
+
+V1 correctly restores a fresh fixture, but this lookup still depends on presentation order. The product can legitimately insert another explanatory element before the action and break a persistence test whose intended behavior remains correct. The stale-note incident demonstrates that coupling.
+
+**Fixed looks like:** locate the Remove button by its action or accessible name, then retain the same reload and history assertions. Exercise both fresh and stale cards, preferably under a controlled clock, so inserting freshness copy cannot redirect the test’s click.
+
+This is a test-maintenance weakness, **not a product defect or convergence blocker**. The previously parked malformed-host and cross-store persistence candidates remain parked; I established no new material valid-path failure for either.
+
+**4. Professional standard — cycle 4**
+
+- **Miss — Gemini’s R15 certification.** Gemini concluded that the canonical contract held after an attack list that did not test timestamp typing or equivalent timestamp spellings. Codex’s array reproduction and ChatGPT’s offset-alias reproduction subsequently disproved that verdict on the same build. The miss was the breadth of the certification: checking object references and exact-key replacement did not establish canonical identity across the accepted key domain.
+
+- **Hit — ChatGPT’s equivalent-instant timestamp finding.** ChatGPT supplied two concrete timestamp strings representing one instant, traced their separate acceptance through string-key upsert, and connected the duplicate to an incorrectly enabled best-so-far threshold. Nova reproduced it. That finding complemented the array-type case and led G1 to normalize timestamp spelling as well as enforce its type. The current stored and live alias tests demonstrate that repair.
+## Cycle 5 — Freebuff: lane unavailable (record)
+
+Freebuff's cycle-5 attempt reached its chat surface but its operation timed out inside the platform ('The operation timed out. Enter: retry / Esc: back to draft'); no response file was produced and no task content was completed. This is the fourth consecutive cycle in which the lane could not deliver (cycle 2: usage-policy block on scripted submissions; cycle 3: two session-start failures; cycle 4: platform model-configuration loop; cycle 5: operation timeout). Recorded as unavailable, not counted, per the convergence bar. Its clone holds the full current code and board.
+
+**Nova's note on Codex's §3:** the positional-button lookup weakness in the final-node test is accepted and parked as a named candidate (locate the Remove action by accessible name; exercise fresh and stale cards under a controlled clock). Codex ranks it test-maintenance, not a product defect; Nova concurs — the product behavior in the stale incident was correct.
+
+---
+
+# CYCLE 5 — ChatGPT's response (verbatim, CYCLE5-RESPONSE-GPT.md)
+
+# Cycle 5 — ChatGPT review of fix pass 4
+
+## Review basis and hash verification
+
+I verified the staged hashes against the board:
+
+- `index.html`: `9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47` — match.
+- `test/frontend.test.js`: `37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64` — match.
+- `ROUND3-FIX4-SPEC.md`: `4aed0481d327bbfe391b433c49597308733eda3d2e026b3e92d8d94a19aef168` — match.
+
+Nova reports 231/231 full-suite tests, 100/100 frontend tests, and all five G1 tests passing. I accept those as reported verification evidence; I did not rerun the suite. My code review below is against the hash-matching files.
+
+## 1. Verdict table
+
+| Ruling | Verdict | File/line evidence |
+|---|---|---|
+| **R15′ — canonical checkedAt identity** | **AGREE.** | `sanitizeReport` now requires `checkedAt` to be a string and rejects invalid or out-of-window values (`index.html:526`). It converts accepted spellings to canonical UTC ISO before return (`:528`). The shared `upsertReport` keys on host and checkedAt (`:567–571`); load routes sanitized history through it (`:574–579`), reconciles lastReport to history or upserts it (`:585–590`), and live success also uses it (`:1012`). Thus timestamp aliases collapse before comparison, conflicts use last arrival on history/live paths, and the best-score threshold counts distinct canonical keys. The five G1 tests listed at `test/frontend.test.js:1197–1267` cover non-string rejection, stored aliases, live offset aliases, canonical backend spelling, and history/lastReport reload reconciliation. |
+| **V1 — refresh the stale fixture timestamp** | **AGREE.** | The test at `test/frontend.test.js:370–378` now creates its report with `new Date().toISOString()` (`:371`) and preserves both assertions: the removed final node remains absent after reload (`:375–376`), while its history remains (`:377`). This keeps the test focused on removal persistence rather than on a fixed date crossing the product’s 24-hour stale boundary. The board reports that the prior failure also occurred on unmodified HEAD; I accept that as Nova’s reported comparison evidence. The product stale rule is unchanged. |
+
+## 2. Attack on the current build
+
+I reviewed the canonical identity path at load and live success, the requested-host check, the freshness scheduler, sanitizer repairs, report/export rendering, and the V1 removal flow. I did not run probes or the test suite independently; the findings below are code inspection and the board’s reported G1 test evidence.
+
+**R15′ identity:** the original array/object timestamp issue is closed by the string check at `index.html:526`; the offset-alias issue is closed by canonicalization at `:528`. Load and live success share the same upsert (`:567–579`, `:1012`). I found no remaining route by which two accepted timestamp spellings for one instant become separate report keys.
+
+**Host binding:** the live response must have a sanitized host equal to the requested node host before the success path (`index.html:987–993`). Wrong-host responses return before changing lastReport/history or persisting the report (`:1012–1014`). The explicit regression is at `test/frontend.test.js:1134–1145`.
+
+**Freshness:** the scheduler takes reports from the full fleet and schedules the earliest nonnegative boundary with a browser-safe timeout cap (`index.html:914–925`). A capped timer fires through refresh/recompute; the prior F3 tests at `test/frontend.test.js:1147–1163` cover the ten-minute live-skew boundary and cap recomputation.
+
+**Repair and rendering:** the gate validates the envelope, canonicalizes checkedAt, repairs malformed sections/fixes, removes invalid ports, and normalizes display scalars/counts (`index.html:524–552`). The F4 and F6 regressions exercise malformed status repair through load and proof export, plus scalar and port-count repair (`test/frontend.test.js:1165–1184`).
+
+**Previously parked malformed-host normalization:** the existing normalizer still strips one trailing dot (`index.html:523`). For malformed `a.example..`, a first gate pass produces `a.example.`, and a second produces `a.example`; this is a non-idempotent accepted malformed input. It was already identified and parked in the board. I found no evidence that a valid backend hostname takes this path or that it bypasses R16, so I do not reopen it as a new material defect under this cycle’s bar. It remains a reasonable future hostname-syntax hardening candidate.
+
+**V1:** the current-time fixture avoids incidental stale markup changing the rendered child positions, while the test still clicks the remove control by its expected card child and checks the same persistence invariant. No product behavior or stale threshold was weakened.
+
+I found no new reproducible material defect on a valid input path. The full-suite and frontend counts remain Nova’s reported results, not a rerun by me.
+
+## 3. One level deeper
+
+**Rank: weakness, already parked — malformed host normalization is not idempotent.** `normalizeHost` trims, lowercases, and removes one trailing dot (`index.html:523`), but it does not reject malformed repeated trailing dots. An accepted stored value such as `a.example..` normalizes to `a.example.` on the first load and to `a.example` on a later load. That makes a malformed identity unstable across passes, although I found no valid backend path or wrong-host acceptance from it.
+
+**Fixed looks like:** define and enforce an explicit hostname syntax policy at the gate. Either reject malformed hostnames or normalize them to a stable canonical form; then pin the property that every accepted host is unchanged by a second normalization/sanitization pass. Keep this parked unless the project broadens the current convergence bar to malformed-host storage hardening.
+
+## 4. Professional standard — Cycle 4
+
+- **Miss — Gemini, Cycle 4 R15 verdict:** Gemini agreed with R15 before probing timestamp typing or spelling, even though the board records Codex’s array-form reproduction and ChatGPT’s equivalent-instant alias reproduction. Those were direct attacks on the identity rule. Nova appropriately marked Gemini’s R15 agreement as superseded by the reproduced evidence.
+- **Hit — Codex, Cycle 4 fix-pass-4 implementation:** Codex addressed both forms at the shared gate: it rejects non-string timestamps and canonicalizes valid timestamp spellings before any identity keying. The five G1 tests cover load and live ingress, including alias replacement and reload consistency. That is a focused repair at the shared boundary, rather than separate special cases in consumers.
+
+## Convergence call
+
+I **AGREE** with R15′ and V1. The staged hashes match the board; Nova reports the full suite green; I found no new material defect on a valid path. The previously parked malformed-host normalization issue remains a non-blocking hardening candidate. On the evidence available, Cycle 5 meets its convergence bar.
+
+---
+
+# CYCLE 5 — Gemini's response (verbatim, CYCLE5-RESPONSE-GEMINI.md)
+
+# Gemini — Cycle 5 Convergence Review (2026-11-21)
+
+**Lane:** Gemini  
+**Target Build:** Fix-pass-4 build at commit `df9dda6`  
+- `index.html` SHA-256: `9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47` (verified match, 1197 lines)  
+- `test/frontend.test.js` SHA-256: `37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64` (verified match, 1269 lines, 100/100 frontend tests passing locally; 231/231 full suite on Nova's run)  
+- `ROUND3-FIX4-SPEC.md` SHA-256: `4aed0481d327bbfe391b433c49597308733eda3d2e026b3e92d8d94a19aef168` (27 lines)  
+**Board Reference:** `round3-lane-board-2026-11-21.md` (Cycle 5 section, lines 2767–2812)  
+**Mode:** Review only — no edits to `index.html` or tests.
+
+---
+
+## 1. Verdict Table Over `R15′`, `V1`, and Standing Rulings
+
+| Item | Verdict | File / Line Evidence & Verification |
+| :---: | :---: | :--- |
+| **R15′** — One canonical upsert governs `(host, checkedAt)` identity on load and live success, where `checkedAt` is a gate-canonicalized UTC ISO string: type-enforced as a string and spelling-normalized at the same gate; last arrival wins a conflict; `best-so-far` counts distinct checks only | **AGREE** | Implemented in `sanitizeReport` (`index.html:524–553`) and `upsertReport` (`index.html:567–572`):<br>• Line 526: envelope check requires `typeof r.checkedAt === 'string'`, dropping array (`["2026-11-20T12:00:00Z"]`), numeric (`2026`), and object (`{ value: ... }`) forms on both stored load (`index.html:576, 583`) and live response (`index.html:988–994`).<br>• Line 528: `clean.checkedAt = new Date(Date.parse(r.checkedAt)).toISOString();` rewrites every accepted timestamp to canonical 24-character UTC ISO format (`YYYY-MM-DDTHH:mm:ss.sssZ`) before `upsertReport`, `observations`, `bestFor`, `staleAge`, or persistence.<br>• Line 551: `if (!options.live && JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;` flags non-canonical stored spellings as repaired while keeping canonical backend strings (`new Date(Date.now()).toISOString()` in `api/_lib/check.js:182`) byte-identical with `storageRepaired === false`, and suppressing the flag on live responses.<br>• Tested in `test/frontend.test.js:1197–1269` (`G1(a)` through `G1(e)`). |
+| **V1** — Test-fixture correction in `removing the final node stays removed after reload without erasing history` (`test/frontend.test.js:370–378`): uses `new Date().toISOString()` instead of fixed `'2026-11-20T12:00:00Z'` | **AGREE** | Verified at `test/frontend.test.js:370–378` and `index.html:860–888`:<br>• In `renderFleet()`, a healthy (`SYNCED`) fresh card has 4 children: `[0]` `.entry-heading`, `[1]` `span.hint` (host), `[2]` `dl` (stats), and `[3]` `button` (`Remove ...`), because `words` (`index.html:871–884`) is empty when `state === 'SYNCED'`, `!age`, and `history.length === 1` (`!trend`, `!whatChanged`).<br>• Once the real wall clock crossed `2026-11-21T12:00:00Z` (>24h after hardcoded `'2026-11-20T12:00:00Z'`), `staleAge(r)` returned `'checked 1 day ago'`, pushing `'STALE · checked 1 day ago'` into `words` (`index.html:874`) and inserting a `<p class="hint">` at `children[3]`, which shifted the `Remove` button to `children[4]` (so `children[3].onclick()` at `test/frontend.test.js:374` was a no-op).<br>• Updating the fixture to `new Date().toISOString()` (`test/frontend.test.js:371`) tests a fresh healthy report as originally intended without altering any product rule or weakening any assertion (`fleet.length === 0`, `history.length === 1`). |
+| **Standing Rulings (`R1′+F6`, `R2`, `R3`, `R4″`, `R5`, `R6′`, `R7′`, `R8″`, `R9–R14`, `R16`, `F5`)** | **AGREE (Unchanged)** | All standing rulings remain intact; only 2 lines changed in `index.html` (`:526` and `:528`). |
+
+---
+
+## 2. Attack the Current Build (`df9dda6`)
+
+I attacked the fix-pass-4 build (`index.html` at `df9dda6`) specifically hunting for any remaining ways to break **canonical identity**, **host binding**, **freshness**, **repair**, or **rendering**.
+
+### What I Tried (With Line-Level Proof)
+
+1. **Attack 1 — Can `new Date(Date.parse(r.checkedAt)).toISOString()` ever throw a `RangeError: Invalid time value` inside `sanitizeReport`?**
+   - Checked `index.html:526–528`:
+     Line 526 guards `!Number.isFinite(Date.parse(r.checkedAt))` before line 528 runs. In ECMAScript, `Date.parse(str)` returns either `NaN` or a finite integer millisecond value within $\pm 8.64 \times 10^{15}\text{ ms}$ ($\pm 100,000,000$ days around epoch), which is the exact domain where `new Date(ms).toISOString()` is guaranteed not to throw `RangeError`.
+
+2. **Attack 2 — Can two different string inputs produce the same instant in `Date.parse` while failing to collide in `upsertReport` after G1?**
+   - Checked `index.html:528` and `567–571`:
+     Because `clean.checkedAt` is unconditionally overwritten with `new Date(Date.parse(r.checkedAt)).toISOString()`, `clean.checkedAt` is a function solely of the parsed numeric millisecond instant `Date.parse(r.checkedAt)`. Therefore, for any two strings $s_1, s_2$ accepted by the gate:
+     $$\text{Date.parse}(s_1) = \text{Date.parse}(s_2) \iff \text{clean}_1.\text{checkedAt} === \text{clean}_2.\text{checkedAt}$$
+     Syntactic equality in `upsertReport` (`r.checkedAt === report.checkedAt`) is now mathematically isomorphic to timestamp instant equality.
+
+3. **Attack 3 — What if `lastReport` in `localStorage` has an offset alias (`"2026-11-20T06:00:00-06:00"`) while `nhr:history` has the canonical UTC string (`"2026-11-20T12:00:00.000Z"`)?**
+   - Checked `index.html:575–590` and test `G1(e)` (`test/frontend.test.js:1257–1269`):
+     Both `history` entries (`:576`) and `saved` (`:583`) pass through `sanitizeReport` *before* the `history.find(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt)` lookup at `:587`. Thus `lastReport.checkedAt` is already rewritten to `"2026-11-20T12:00:00.000Z"`, matches `canonical` in `history`, sets `storageRepaired = true` (from sanitizing `saved` at `:583`), and produces a single entry in `history`.
+
+4. **Attack 4 — What if `lastCheckAll` (`nhr:lastCheckAll`) is stored as an array `["2026-11-21T12:00:00Z"]`?**
+   - Checked `index.html:603–604`:
+     ```js
+     let lastCheckAll = readStored(CHECK_ALL_KEY, null);
+     if (lastCheckAll !== null && (typeof lastCheckAll !== 'string' || !Number.isFinite(Date.parse(lastCheckAll)) || Date.parse(lastCheckAll) > Date.now() + 300000)) { lastCheckAll = null; storageRepaired = true; }
+     ```
+     `lastCheckAll` already checks `typeof lastCheckAll !== 'string'` first, so array/number/object forms are nulled and flagged.
+
+5. **Attack 5 — What if a fleet entry in `nhr:fleet` has `host` or `label` as an array or object?**
+   - Checked `index.html:595–601`:
+     `typeof n.host !== 'string'` drops non-string hosts and flags `storageRepaired = true`; `typeof n.label === 'string' ? n.label : normalizeHost(n.host)` repairs non-string labels and flags `storageRepaired = true`.
+
+6. **Attack 6 — Does any other test in `test/frontend.test.js` have a wall-clock time-bomb like V1?**
+   - Checked every hardcoded `'2026-11-...'` timestamp in `test/frontend.test.js`:
+     - Unlike V1 (which accessed the `Remove` button by fixed index `children[3]`, assuming `words` was empty and therefore assuming the report was fresh `< 24h` against real `Date.now()`), the other tests either:
+       - access the `Remove` button via `children.at(-1)` (`test/frontend.test.js:233, 862, 930, 938`), which is invariant to whether a `<p class="hint">` is inserted before the button, or
+       - test pure functions (`scoreFor`, `bestFor`, `changedAt`, `catchupRate`, `trendFor`, `changesFor`, `cardLines`, `proofText`), or
+       - use `new Date().toISOString()` / `fakeClock` / `boundaryClock`.
+     - One note for future days (recorded in §3 below): if the test suite is run on or after **2026-11-26** (> 5 days after the hardcoded `'2026-11-20T12:00:00Z'` fixtures), `Date.parse('2026-11-20T12:00:00Z') <= now + 300000` remains true forever (past dates never fail the future rule!), so no load-gate test will ever expire. What about `bestFor` cross-year? If run in **2027**, `date.getUTCFullYear() !== new Date().getUTCFullYear()` (`index.html:627`) would append `' 2026'` to `'Best so far: 95 · 14 Nov'`. That is months away and noted in §3.
+
+**Result of Attack:** **0 reproducible defects found.**
+
+---
+
+## 3. One Level Deeper — The Weakest Remaining Point a World-Class Reviewer Would Still Catch
+
+### Ranked Finding: **TASTE / TEST-HARNESS HYGIENE (Non-blocking)** — `V1` Occurred Because `EDGE-CASES.md`'s Clock Rule ("No test may depend on the machine's real clock") Was Not Enforced on Legacy Round-1/Round-2 Tests
+
+- **Category:** **Taste / Test-Harness Hygiene** (strictly in `test/frontend.test.js`; zero defect in `index.html`).
+- **Exact File / Line Evidence (`EDGE-CASES.md:28–29` vs `test/frontend.test.js:371, 680, 883`):**
+  - `EDGE-CASES.md` lines 28–29 state: *"All time tests must stub `Date.now` and pass explicit ISO `checkedAt` strings. No test may depend on the machine's real clock, locale, or timezone."*
+  - Why did `V1` (`removing the final node stays removed after reload without erasing history`, `test/frontend.test.js:370–378`) fail 24 hours after Round 2 was written? Because it hardcoded `'2026-11-20T12:00:00Z'`, relied on the machine's real `Date.now()` being within 24 hours of that timestamp so `staleAge` wouldn't add a hint paragraph, and indexed the Remove button as `children[3]` instead of `children.at(-1)`.
+  - Similarly, `bestFor` (`index.html:627`) compares `date.getUTCFullYear() !== new Date().getUTCFullYear()`, and tests at `test/frontend.test.js:680–685` and `883–886` hardcode `'2026-11-14T12:00:00Z'` without stubbing `Date` — meaning they pass throughout 2026 and would append `' 2026'` if run in 2027.
+- **What "Fixed" Looks Like (Parked Test-Hygiene Candidate):**
+  - In `V1`, using `new Date().toISOString()` (`test/frontend.test.js:371`) completely solves the 24-hour staleness drift (and `children.at(-1)` is already used by every Round 3 removal test). Pinning a default epoch in `browser()` or passing explicit clocks in year-dependent tests is a clean future test-harness polish item and has zero impact on shipping `index.html`.
+
+---
+
+## 4. Professional Standard — One Miss and One Hit in Another Lane's Cycle-4 Work
+
+### One Hit: **Codex & ChatGPT (Convergent Discovery of the `checkedAt` Identity Key Domain Hole — `G1` / `R15′`)**
+- **Why it met the highest professional standard:** In Cycle 4, both **Codex** and **ChatGPT** independently attacked the second element of the `(host, checkedAt)` composite primary key in `upsertReport` (`index.html:566`):
+  - **Codex** found that `sanitizeReport` checked `typeof r.host === 'string'` but never checked `typeof r.checkedAt === 'string'`, allowing `checkedAt: ["2026-11-20T12:00:00Z"]` to pass `Date.parse(...)` via array-to-string coercion while failing reference equality `r.checkedAt === report.checkedAt` in `upsertReport`.
+  - **ChatGPT** found that two valid ISO strings representing the exact same instant (`"2026-11-20T12:00:00Z"` and `"2026-11-20T06:00:00-06:00"`) both passed `Date.parse` while remaining distinct string keys in `upsertReport`.
+  - Together, those two probes proved that a composite key is only canonical when *both* halves of the key are type-enforced and normalized to a single canonical representation at ingress (`G1`).
+
+### One Miss: **Codex (Cycle 4 Execution Stability / Truncated First Pass)**
+- **Why it was a process miss:** In Cycle 4 (`round3-lane-board-2026-11-21.md:2468–2473`), **Codex's** initial review session terminated mid-run after emitting only a three-sentence progress message without writing its four-part review or verdict table, requiring Nova to verify the finding and dispatch a continuation run to obtain Codex's full Cycle 4 response. (On the continuation run, Codex delivered a thorough, exact four-part review.)
+
+---
+
+## 5. Cycle 5 Convergence Call (Gemini Lane)
+
+- **Verdicts on `R15′` and `V1`:** **AGREE** on both (`R15′` and `V1`), and **AGREE** on all standing rulings (`R1′+F6`, `R2`, `R3`, `R4″`, `R5`, `R6′`, `R7′`, `R8″`, `R9–R14`, `R16`, `F5`).
+- **New Reproducible Material Defects:** **0**.
+- **Suite Verification:** **100/100 frontend tests pass locally** against hash-verified `index.html` (`9a169d0b...`) and `test/frontend.test.js` (`37cf120e...`); **231/231 full suite passes on Nova's run**.
+- **Final Verdict:** **CONVERGED — SHIP ROUND 3 (`df9dda6`).**
+
+---
+
+# Nova reconciliation #8 — CONVERGENCE (2026-11-21)
+
+**Cycle 5 is CONVERGED. The bar is met on every term:**
+
+- **Unanimity:** every available lane AGREEs on R15′ and V1 and on all standing rulings — Codex (hash-verified, own suite run 230 pass + 1 sandbox skip, four-spelling identity probe), ChatGPT (hash-verified, code-level attack), Gemini (hash-verified, 100/100 frontend locally, six attack vectors including a proof that canonicalization makes string equality isomorphic to instant equality). Freebuff was unavailable for the fourth consecutive cycle (platform failures, each recorded); under the bar, a lane that cannot run is recorded, not counted.
+- **No new material defect:** no lane raised a reproducible material defect against df9dda6. The cycle's deeper items are parked candidates, each ranked non-blocking by its own author: host-normalization idempotence for malformed hosts (Codex + ChatGPT, carried from cycle 4), cross-store REPORT_KEY hygiene (Gemini, cycle 4), positional Remove-button lookup in the final-node test (Codex), and clock-rule test hygiene for year-dependent fixtures (Gemini).
+- **Suite green on Nova's run:** 231/231 full, 100/100 frontend, against the exact hashes the lanes certified.
+
+**Ship sequence now executes under Tim's standing approvals** (the round-3 merge 'Word' of 2026-11-21 01:11 CT, gated on convergence by his 01:46 CT directive; the six-hour no-wait authorization of 02:33 CT; renewed 'Word' 09:12 CT): GPT final QC on the converged build → merge round3-build into main → production verification → this board completed and re-rendered to PDF → final ship report to Tim.
+
+---
+
+# FINAL QC — ChatGPT (verbatim, FINAL-QC-GPT.md)
+
+# Final QC — df9dda6 merge candidate
+
+## Verdict: NO-SHIP pending provenance record
+
+I found no product-code or test-fixture issue in the hash-matching Cycle 5 files that should independently block the merge. However, I cannot certify the stated merge candidate as `df9dda6` from this project folder: it has no `.git` metadata, and the board copy here does not contain reconciliation #8 or the `df9dda6` identifier. The board ends at the Cycle 5 brief. Since this is the final gate before an automatic production deploy, the board’s claimed convergence and the exact commit-to-tested-files link need to be present in the review record before I can give an unconditional ship verdict.
+
+This is a provenance/record blocker, not a discovered code regression. If reconciliation #8 and the commit identity are available in the actual merge source, the code review findings below support shipping the hash-verified build.
+
+## What I checked
+
+- **`index.html`** SHA-256: `9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47`. It matches the fix-pass-4 tested-build hash recorded in the Cycle 5 board.
+- **`test/frontend.test.js`** SHA-256: `37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64`. It matches the recorded tested-build hash.
+- **`ROUND3-FIX4-SPEC.md`** is present and its G1 instructions agree with the implementation: `checkedAt` must be a string, accepted timestamps become canonical UTC ISO before upsert/keying, and live canonicalization does not set the saved-data repair hint.
+- **G1 test coverage** is present in the test file: non-string timestamp rejection; stored alias collapse; live alias replacement; canonical backend spelling; and history/lastReport alias consistency across reload.
+- **V1 fixture** at `test/frontend.test.js:370–378` uses `new Date().toISOString()` and retains the assertions that removing the final fleet node survives reload while report history remains. This avoids making the test depend on a stale-age threshold or rendered child position. The product’s 24-hour stale rule is not changed by the fixture.
+- The inspected `sanitizeReport` and `upsertReport` path canonicalizes timestamps before identity comparison (`index.html:524–552`, `:567–579`); live success uses the shared upsert (`:1012`). The existing host binding and freshness scheduler remain in place (`:987–993`, `:914–925`).
+- Nova’s 231/231 full-suite and 100/100 frontend results, including the pre-existing fixture failure comparison, are recorded evidence; I did not rerun them.
+
+## Merge-record gap
+
+A search of the board copy found no `df9dda6` reference and no “reconciliation #8.” The board does record the Cycle 5 tested-file hashes and the 231/231 verification, but the reconciliation and final lane consensus described in the request are not in this copy. `git status` and `git rev-parse` also fail because this folder is not a Git checkout, so I cannot independently establish that the matching files are the contents of commit `df9dda6` or that this commit is the one queued for merge/deploy.
+
+## Ship decision
+
+**Do not merge/deploy from this review record yet.** Add or provide the reconciliation #8 record and verify that the merge target is exactly the hash-verified `df9dda6` tree. Once that provenance link is confirmed, I see no code, spec, hash, V1, or regression blocker in the files reviewed, and the candidate is suitable to ship on the reported green suite.
+
+## Final addendum — provenance closed
+
+I reviewed the refreshed board. It now contains the three Cycle 5 responses and **Nova reconciliation #8 — CONVERGENCE**, including the `df9dda6` ship sequence. The current `index.html` and `test/frontend.test.js` hashes still match the tested-build hashes on the board. The commit-blob hashes supplied from the merge source match those same files exactly, closing the commit-to-tested-build link raised above.
+
+**Unconditional final verdict: SHIP `df9dda6d164988a62bd2d4f7a055b05b57770700`.** I found no merge-blocking code, test, spec, or board-evidence issue. The previously identified host-normalization and test-harness items remain parked, non-blocking candidates under reconciliation #8.
+
+**Nova's record:** the first QC pass returned NO-SHIP on provenance only — the ChatGPT folder's board copy predated the cycle-5 responses and reconciliation #8, and the folder is not a git checkout. Nova closed the gap exactly as the QC demanded: refreshed the folder's board to the current copy (all cycle-5 responses + reconciliation #8) and supplied the commit link from the merge source — HEAD of round3-build = df9dda6d164988a62bd2d4f7a055b05b57770700, with the committed blob of index.html at df9dda6 hashing to 9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47 and the committed blob of test/frontend.test.js hashing to 37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64, byte-identical to the tested build. GPT's appended verdict above is the unconditional SHIP.
+
+---
+
+# COMPLETION — Round 3 shipped (2026-11-21)
+
+- **Merge:** round3-build merged into main as commit 291b5860e2b0597f3d746afb3b7a9b79f77492b4 ("Merge round 3: score breakdown, best-so-far, fleet filters, stale marking, fleet verdict strip, sample report, empty-state grammar — convergence cycles 1-5, fix passes 1-4, GPT final QC SHIP"). Merged tree re-verified on Nova's run: 231/231.
+- **Push:** main pushed to origin (439923e..291b586), which auto-deploys both Vercel projects.
+- **Production verification:** https://node-health-report.vercel.app/ serves index.html with SHA-256 9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47 — byte-identical to the converged, hash-certified build at df9dda6. Verified by direct fetch and hash comparison on 2026-11-21.
+- **The convergence record:** five cycles, four fix passes, fourteen-plus rulings (R1′–R16, F1–F6, G1, V1), every defect on this board reproduced or line-proven before it was fixed, tests shipped with every fix. Freebuff could not deliver in cycles 2–5 (platform failures, each recorded in its cycle section); the three available lanes reached unanimity in cycle 5, and ChatGPT's final QC — after its provenance objection was closed with the refreshed board and the commit-blob hashes — returned an unconditional SHIP.
+- **Parked candidates (non-blocking, named for a future round):** host-normalization idempotence / explicit hostname syntax policy at the gate; cross-store REPORT_KEY rewrite on canonical override; Remove-action lookup by accessible name in the final-node test plus fresh/stale coverage under a controlled clock; clock-rule test hygiene for year-dependent fixtures.
+
+Round 3 is closed. Rounds 1–3 are all live in production.
