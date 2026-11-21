@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const html = readFileSync(require.resolve('../index.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
+function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false, throwingStorage = false } = {}) {
   const elements = new Map();
   const makeElement = () => {
     const el = {
@@ -37,12 +37,13 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     },
     async createPayment(data, handlers) { paymentData = data; callbacks = handlers; },
   };
+  const events = {};
   const localStorage = {
-    getItem: key => storage.get(key) ?? null,
-    setItem: (key, value) => storage.set(key, String(value)),
+    getItem: key => { if (throwingStorage) throw Error('blocked'); return storage.get(key) ?? null; },
+    setItem: (key, value) => { if (throwingStorage) throw Error('blocked'); return storage.set(key, String(value)); },
     removeItem: key => storage.delete(key),
   };
-  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: makeElement },
+  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: makeElement, addEventListener: (event, cb) => { events[event] = cb; } }, window: { addEventListener: (event, cb) => { events[event] = cb; } },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       if (url.endsWith('/api/check')) {
@@ -53,7 +54,7 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     },
   });
   vm.runInContext(source, context);
-  return { context, element, calls, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
+  return { context, element, calls, events, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
 }
 
 test('frontend queues incomplete payment until the token is available', async () => {
@@ -274,8 +275,10 @@ function fleetBrowser(count = 3) {
 function fakeClock(b) {
   let now = 0;
   const timers = [];
-  b.context.Date = class extends Date { static now() { return now; } };
-  b.context.setTimeout = (callback, delay) => { timers.push({ callback, delay, at: now + delay }); return timers.length; };
+  const epoch = Date.parse('2026-11-20T12:00:00Z');
+  b.context.Date = class extends Date { static now() { return epoch + now; } };
+  b.context.setTimeout = (callback, delay) => { const timer = { callback, delay, at: now + delay }; timers.push(timer); timers.sort((a,b) => a.at-b.at); return timer; };
+  b.context.clearTimeout = timer => { const index = timers.indexOf(timer); if (index !== -1) timers.splice(index,1); };
   return { timers, async tick() {
     const timer = timers.shift(); assert.ok(timer);
     now = timer.at;
@@ -310,7 +313,7 @@ test('429 queue states show positions and minute ETAs and retry at 61 second int
   assert.deepEqual(clock.timers.map(t => t.delay), [61000, 122000, 183000]);
   assert.equal(evaluate(b, 'queueCopy(fleet[0].host)'), 'Queue position 1 — about 1 minute. Keep this page open.');
   assert.equal(evaluate(b, 'queueCopy(fleet[2].host)'), 'Queue position 3 — about 3 minutes. Keep this page open.');
-  assert.doesNotMatch(html, /under a minute/);
+  assert.doesNotMatch(evaluate(b, 'queueCopy(fleet[0].host)'), /under a minute/);
   let attempts = 0;
   b.context.fetch = async (url, options) => { attempts++; return { ok: true, json: async () => observed(JSON.parse(options.body).host, '2026-11-20T12:00:00Z', null) }; };
   await clock.tick(); assert.equal(attempts, 1);
@@ -326,7 +329,7 @@ for (const error of ['missing_access_token', 'invalid_access_token', 'no_complet
     await b.element('check-all').click();
     assert.equal(attempts, 1);
     assert.equal(b.element('check-all').disabled, false);
-    assert.equal(b.element('fleet-progress').textContent, b.element('check-result').textContent);
+    assert.equal(b.element('fleet-progress').textContent, 'The checks could not be completed — ' + b.element('check-result').textContent);
     assert.match(b.element('check-result').textContent, error === 'no_completed_check' ? /Buy the full health check first/ : /We could not run your check/);
   });
 }
@@ -365,7 +368,7 @@ test('dark tokens carry readable text contrast including tinted panels', () => {
 });
 
 test('removing the final node stays removed after reload without erasing history', () => {
-  const report = observed('example.com', '2026-11-20T12:00:00Z', 0, 'ok');
+  const report = observed('example.com', new Date().toISOString(), 0, 'ok');
   const storage = new Map([['nhr:lastReport', JSON.stringify(report)]]);
   const b = browser({ storage });
   b.element('fleet-list').children.at(-1).children[3].onclick();
@@ -377,7 +380,7 @@ test('removing the final node stays removed after reload without erasing history
 test('stored verdict severity change records its real timestamp even when both are behind', () => {
   const reports = [observed('example.com', '2026-11-20T10:00:00Z', 100), observed('example.com', '2026-11-20T11:00:00Z', 2000, 'bad')];
   const b = browser({ storage: new Map([['nhr:history', JSON.stringify(reports)]]) });
-  assert.equal(evaluate(b, "changedAt('example.com')"), '2026-11-20T11:00:00Z');
+  assert.equal(evaluate(b, "changedAt('example.com')"), '2026-11-20T11:00:00.000Z');
 });
 
 test('fix panel excludes healthy reports and ranks severity, closed ports, then gap', () => {
@@ -430,13 +433,19 @@ test('null protocol renders an em dash and hides the network note', () => {
   assert.equal(b.element('network-note').hidden, true);
 });
 
-test('empty fleet offers an honest starting point and clears it when a node is added', async () => {
+test('empty fleet uses the directory empty-state grammar and its button opens the add-node flow', async () => {
   const b = browser();
   const empty = b.element('fleet-list').children[0];
   assert.equal(empty.className, 'empty-state');
-  assert.equal(empty.children[0].textContent, 'Your fleet starts here');
-  assert.match(empty.children[1].textContent, /on this device/);
+  assert.equal(empty.children[0].textContent, 'No nodes yet');
+  assert.equal(empty.children[1].textContent, 'Add a node and its first check takes under a minute.');
+  assert.equal(empty.children[2].textContent, 'Add a node');
+  assert.match(html, /\.empty-state h2 \{[^}]*font-weight:\s*700/);
+  assert.match(html, /\.empty-state button \{[^}]*background:\s*transparent/);
   assert.equal(b.element('check-all').disabled, true);
+  b.element('run-panel').hidden = true;
+  empty.children[2].onclick();
+  assert.equal(b.element('run-panel').hidden, false);
   b.element('node-host').value = 'new.example';
   b.element('own-node').checked = true;
   await b.element('add-node').click();
@@ -473,7 +482,7 @@ test('verdict hero reflects empty, healthy, and attention states with monospace 
   assert.equal(okBrowser.element('fleet-verdict').className, 'verdict-ok');
   assert.deepEqual(okBrowser.element('fleet-verdict').children.filter(c => c.className).map(c => [c.textContent, c.className]), [['1', 'num ok']]);
 
-  const warn = observed('warn.example', '2026-11-20T12:00:00Z', 25, 'warn');
+  const warn = observed('warn.example', '2026-11-20T12:00:00Z', 25, 'warn', 4);
   const warnBrowser = browser({ storage: new Map([
     ['nhr:fleet', JSON.stringify([{ host: warn.host, label: 'Warn' }])],
     ['nhr:history', JSON.stringify([warn])],
@@ -649,4 +658,612 @@ test('score fix Testnet2 line follows the measured ports and the bigger lever', 
   legacy.ports = allPorts;
   legacy.fixes = [{ title: 'Open the missing ports', why: '', how: '' }];
   assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(legacy) + ', scoreFor(' + JSON.stringify(legacy) + '))'), 'Nothing you can open — the unpublished ports belong to the software, not your setup.');
+});
+
+test('round three breakdown uses measured points and clears rows for unscored legacy reports', () => {
+  const b = browser();
+  for (const [gap, points] of [[0,50],[3,45],[11,30],[1001,15],[100001,0]]) {
+    const r = observed('a', new Date().toISOString(), gap, 'ok', 8);
+    evaluate(b, 'renderReportExtras(' + JSON.stringify(r) + ')');
+    const rows = b.element('score-breakdown');
+    assert.equal(rows.hidden, false);
+    assert.equal(rows.children[0].textContent, 'Ports — 8 of 10 open · 40 points');
+    assert.equal(rows.children[1].textContent, 'Sync — ' + gap + ' blocks behind the network · ' + points + ' points');
+    assert.match(b.element('score-value').textContent, new RegExp('^' + (40 + points) + ' of 100'));
+    assert.ok(rows.children.every(row => row.children.some(c => c.className === 'num')));
+  }
+  evaluate(b, 'renderReportExtras({host:"legacy"})');
+  assert.equal(b.element('score-breakdown').hidden, true);
+  assert.equal(b.element('score-breakdown').children.length, 0);
+  assert.equal(b.element('score-value').textContent, "Not scored yet — enter your node's current ledger so sync can be measured.");
+});
+
+test('round three best score requires two scored stored checks and appears on card and report', () => {
+  const a = observed('a', '2026-11-14T12:00:00Z', 3, 'ok');
+  const z = observed('a', '2026-11-15T12:00:00Z', 11, 'warn', 8);
+  const b = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(z)], ['nhr:history', JSON.stringify([a,z])]]) });
+  assert.equal(evaluate(b, 'bestFor("a")'), 'Best so far: 95 · 14 Nov');
+  assert.equal(b.element('report-best').textContent, 'Best so far: 95 · 14 Nov');
+  assert.match(b.element('fleet-list').textContent, /Best so far: 95 · 14 Nov/);
+  evaluate(b, 'history = ' + JSON.stringify([a, {...z, syncGap:null}, {...z, host:'other'}]));
+  assert.equal(evaluate(b, 'bestFor("a")'), null);
+});
+
+test('round three fleet filters share exact counts and worst-first ordering without persistence', () => {
+  const reports = [observed('good', new Date().toISOString(), 0, 'ok'), observed('low', new Date().toISOString(), 200000, 'bad', 1), observed('bad-section', new Date().toISOString(), 0, 'ok')];
+  reports[2].sections.ports = { ...reports[2].sections.ports, level: 'bad' };
+  const storage = new Map([['nhr:fleet', JSON.stringify(['good','new','bad-section','low'].map(host => ({host,label:host})))], ['nhr:history', JSON.stringify(reports)]]);
+  const b = browser({storage}), before = Array.from(storage.entries());
+  assert.equal(evaluate(b, 'fleetHealth({})'), 'attention');
+  assert.equal(b.element('fleet-strip').textContent, '4 watched · 1 healthy · 3 need a look');
+  assert.deepEqual(b.element('fleet-filters').children.map(c => c.textContent), ['All 4','Needs attention 3','Healthy 1']);
+  assert.deepEqual(b.element('fleet-list').children.map(c => c.children[1].textContent), ['low','bad-section','good','new']);
+  b.element('fleet-filters').children[1].onclick();
+  assert.deepEqual(b.element('fleet-list').children.map(c => c.children[1].textContent), ['low','bad-section','new']);
+  assert.match(b.element('fleet-list').children.at(-1).textContent, /Not checked yet/);
+  b.element('fleet-filters').children[2].onclick();
+  assert.equal(b.element('fleet-list').children.length, 1);
+  assert.equal(b.element('fleet-filters').children[2].ariaPressed, 'true');
+  assert.deepEqual(Array.from(storage.entries()), before);
+  assert.equal(browser({storage}).element('fleet-list').children.length, 4);
+});
+
+test('round three stale threshold strikes only score digits and keeps fresh rendering', () => {
+  const now = Date.now(), r = observed('a', new Date(now - 2 * 86400000).toISOString(), 0, 'ok');
+  const b = browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+  assert.equal(evaluate(b, 'staleAge(' + JSON.stringify(r) + ',' + now + ')'), 'checked 2 days ago');
+  assert.equal(evaluate(b, 'staleAge({checkedAt:"invalid"})'), null);
+  assert.equal(evaluate(b, 'staleAge({checkedAt:new Date(' + now + '-STALE_AFTER_MS).toISOString()},' + now + ')'), null);
+  assert.match(b.element('score-value').children[0].className, /stale-score/);
+  assert.equal(b.element('score-value').children.at(-1).className, undefined);
+  assert.equal(b.element('score-freshness').textContent, 'STALE · checked 2 days ago');
+  assert.equal(b.element('fleet-list').children[0].children[2].children[4].children[1].className, 'stale-score');
+  evaluate(b, 'renderReportExtras(' + JSON.stringify({...r,checkedAt:new Date(now).toISOString()}) + ')');
+  assert.equal(b.element('score-value').children[0].className, 'num ok');
+  assert.equal(b.element('score-freshness').hidden, true);
+});
+
+test('round three check-all timestamp is stored only after real successful completion and restored', async () => {
+  const r = observed('a', new Date().toISOString(), null), storage = new Map([['nhr:fleet',JSON.stringify([{host:'a',label:'A'}])]]);
+  const b = browser({storage,checkResponse:r});
+  assert.doesNotMatch(b.element('fleet-strip').textContent, /last check-all/);
+  await b.element('check-all').click();
+  assert.ok(Number.isFinite(Date.parse(JSON.parse(storage.get('nhr:lastCheckAll')))));
+  assert.match(browser({storage}).element('fleet-strip').textContent, /last check-all \d{2}:\d{2}$/);
+  const failedStorage = new Map([['nhr:fleet',JSON.stringify([{host:'a',label:'A'}])]]);
+  const failed = browser({storage:failedStorage,checkError:'no_completed_check'});
+  await failed.element('check-all').click();
+  assert.equal(failedStorage.has('nhr:lastCheckAll'), false);
+});
+
+test('round three queued check-all waits for the retry before recording completion', async () => {
+  const storage = new Map([['nhr:fleet', JSON.stringify([{host:'a',label:'A'}])], ['nhr:lastCheckAll', JSON.stringify('invalid')]]);
+  const b = browser({storage,checkError:'check_too_frequent'}), clock = fakeClock(b);
+  await b.element('check-all').click();
+  assert.doesNotMatch(b.element('fleet-strip').textContent, /last check-all/);
+  assert.equal(JSON.parse(storage.get('nhr:lastCheckAll')), 'invalid');
+  b.context.fetch = async () => ({ok:true,json:async () => observed('a',new Date().toISOString(),null)});
+  await clock.tick();
+  assert.ok(Number.isFinite(Date.parse(JSON.parse(storage.get('nhr:lastCheckAll')))));
+  assert.match(b.element('fleet-strip').textContent, /last check-all \d{2}:\d{2}$/);
+});
+
+test('sample report is a labelled example in the real format with no ledger numbers or export buttons', () => {
+  const start = html.indexOf('<section id="sample-report"');
+  const end = html.indexOf('<section class="card" aria-labelledby="limits-title">');
+  assert.ok(start > -1 && end > start, 'sample section is placed before the limits section');
+  const sample = html.slice(start, end);
+  assert.equal(sample.split('Sample — an example in the real format, address hidden. Yours will name your node and show its own numbers.').length - 1, 2);
+  assert.match(sample, /<span class="pill neutral" id="sample-tag">SAMPLE<\/span>/);
+  assert.match(sample, />sample-node</);
+  assert.match(sample, /31400–31409/);
+  assert.match(sample, /<span class="num">10<\/span> of <span class="num">10<\/span>/);
+  assert.match(sample, /sync gap <span class="num">3<\/span> blocks/);
+  assert.match(sample, /protocol <span class="num">20<\/span>/);
+  assert.match(sample, /<span class="num ok">95<\/span> of <span class="num">100<\/span> — Healthy/);
+  const points = [...sample.matchAll(/class="num ok">(\d+)<\/span> pts/g)].map(match => Number(match[1]));
+  assert.deepEqual(points, [50, 45]);
+  assert.equal(points[0] + points[1], 95);
+  assert.doesNotMatch(sample, /share-card|proof-download|Share report card|Download proof/);
+  assert.doesNotMatch(sample, /networkLedger|nodeLedger|Network ledger|Node ledger/);
+  assert.match(html, /<a id="sample-report-link" href="#sample-report" role="button" aria-expanded="false" aria-controls="sample-report">See a sample report<\/a>/);
+});
+
+test('sample report opens beside the purchase surface without entering storage, fleet or history', async () => {
+  const storage = new Map();
+  const b = browser({ storage });
+  const snapshot = () => JSON.stringify([...storage]);
+  const before = snapshot();
+  assert.equal(b.element('sample-report').hidden, true);
+  await b.element('sample-report-link').click();
+  assert.equal(b.element('sample-report').hidden, false);
+  assert.equal(b.element('sample-report-link').ariaExpanded, 'true');
+  assert.equal(snapshot(), before);
+  assert.equal(evaluate(b, 'fleet.length'), 0);
+  assert.equal(evaluate(b, 'history.length'), 0);
+  await b.element('sample-close').click();
+  assert.equal(b.element('sample-report').hidden, true);
+  assert.equal(b.element('sample-report-link').ariaExpanded, 'false');
+});
+
+test('a fleet filter with no matches offers only the clear-filter empty state', () => {
+  const r = observed('ok.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: r.host, label: 'OK' }])],
+    ['nhr:history', JSON.stringify([r])],
+  ]) });
+  evaluate(b, "setFleetFilter('attention')");
+  const empty = b.element('fleet-list').children[0];
+  assert.equal(empty.className, 'empty-state');
+  assert.equal(empty.children[0].textContent, 'No nodes match');
+  assert.equal(empty.children[1].textContent, 'Clear the filter to see the whole fleet.');
+  assert.equal(empty.children[2].textContent, 'Clear filter');
+  empty.children[2].onclick();
+  assert.equal(b.element('fleet-list').children[0].className, 'fleet-entry');
+  assert.match(b.element('fleet-verdict').textContent, /All 1 node is healthy/);
+});
+
+test('gate repairs legacy fields, invalid entries and conflicting ports', () => {
+  const b = browser();
+  const r = {...observed(' EXAMPLE.COM. ', '2026-11-20T12:00:00Z', -1, 'ok', 11), fixes:[null,{}, {title:'Keep'}], ports:[null,{port:31400,open:true},{port:31400,open:false},{port:31401,open:true},{port:31401,open:true},{port:1,open:true},{port:31402,open:1}], sections:{status:checkReport.sections.status}};
+  const clean = evaluate(b, 'sanitizeReport('+JSON.stringify(r)+')');
+  assert.equal(clean.host,'example.com'); assert.equal(clean.syncGap,null); assert.equal(clean.portsOpen,null);
+  assert.equal(clean.fixes.length,1); assert.equal(clean.ports.length,1); assert.equal(clean.ports[0].port,31401);
+  assert.equal(clean.sections.sync.line,'Unknown'); assert.equal(clean.sections.ports.line,'Unknown');
+  assert.doesNotThrow(()=>evaluate(b,'cardLines('+JSON.stringify(clean)+'); proofText('+JSON.stringify(clean)+')'));
+});
+test('gate drops uninterpretable reports and enforces the five minute future rule', () => {
+  const b=browser(), now=Date.now();
+  for(const r of [null,3,[],{}, {...checkReport,host:''},{...checkReport,host:' '},{...checkReport,sections:null},{...checkReport,checkedAt:'bad'},{...checkReport,checkedAt:new Date(now+360000).toISOString()}]) assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify(r)+','+now+')'),null);
+  assert.ok(evaluate(b,'sanitizeReport('+JSON.stringify({...checkReport,checkedAt:new Date(now+240000).toISOString()})+','+now+')'));
+});
+test('gate normalizes fleet and history, keeps last duplicate and boots malformed legacy exports', () => {
+  const a=observed(' A. ','2026-11-20T12:00:00Z',3,'ok'), z={...a,host:'a',portsOpen:8,fixes:[null],ports:[null]};
+  const storage=new Map([['nhr:history',JSON.stringify([a,a,z])],['nhr:lastReport',JSON.stringify(z)],['nhr:fleet',JSON.stringify([{host:' A. ',label:'First'},{host:'a',label:'Second'},null])],['nhr:lastCheckAll',JSON.stringify(new Date(Date.now()+360000).toISOString())]]);
+  const b=browser({storage}); assert.equal(evaluate(b,'history.length'),1); assert.equal(evaluate(b,'history[0].portsOpen'),8);
+  assert.equal(evaluate(b,'fleet.length'),1); assert.equal(evaluate(b,'fleet[0].label'),'First'); assert.equal(evaluate(b,'lastCheckAll'),null);
+  assert.equal(b.element('storage-repaired').hidden,false); assert.match(b.element('score-value').textContent,/85/);
+  assert.doesNotThrow(()=>evaluate(b,'cardLines(lastReport);proofText(lastReport)'));
+  const legacy={...a,host:'a'}; delete legacy.fixes;
+  const c=browser({storage:new Map([['nhr:lastReport',JSON.stringify(legacy)],['nhr:history',JSON.stringify([{...legacy,checkedAt:'2026-11-19T12:00:00Z'}])]])});
+  assert.match(evaluate(c,'bestFor("a")'),/95/);
+  assert.equal(browser().element('storage-repaired').hidden,true);
+  assert.equal(browser({storage:new Map([['nhr:lastReport',JSON.stringify(checkReport)]])}).element('storage-repaired').hidden,true);
+});
+test('score validation accepts integer endpoints and zero while rejecting corrupt measurements', () => {
+  const b=browser();
+  for(const open of [0,1,2,3,4,5,6,7,8,9,10,11,-1,9.5,'10']) {
+    const score=evaluate(b,'scoreFor('+JSON.stringify(observed('a','2026-11-20T12:00:00Z',200000,'ok',open))+')');
+    if(Number.isInteger(open)&&open>=0&&open<=10) assert.equal(score.value,open*5); else assert.equal(score,null);
+  }
+  assert.equal(evaluate(b,'scoreFor('+JSON.stringify(observed('a','2026-11-20T12:00:00Z',-1))+')'),null);
+  evaluate(b,'history='+JSON.stringify([observed('a','2026-11-19T12:00:00Z',200000,'bad',0),observed('a','2026-11-20T12:00:00Z',200000,'bad',0)]));
+  assert.match(evaluate(b,'bestFor("a")'),/^Best so far: 0/);
+});
+test('newest check governs health and explains a newly unmeasured score', () => {
+  const a=observed('a','2026-11-19T12:00:00Z',3,'ok');
+  for(const [gap,level,open,expected,hint] of [[null,'bad',10,'attention',true],[null,'ok',10,'attention',true],[11,'ok',8,'healthy',false],[1001,'ok',10,'attention',false]]) {
+    const z=observed('a','2026-11-20T12:00:00Z',gap,level,open);
+    const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(z)],['nhr:history',JSON.stringify([a,z])]])});
+    assert.equal(evaluate(b,'fleetHealth(latestFor("a"))'),expected);
+    assert.equal(b.element('fleet-list').textContent.includes('Sync unmeasured on the latest check'),hint);
+    evaluate(b,'setFleetFilter("healthy")'); assert.equal(evaluate(b,'visibleFleet().length'),expected==='healthy'?1:0);
+  }
+});
+test('fleet order uses scored, unscored and never tiers with host ties and real zero', () => {
+  const b=browser();
+  const rows=[observed('thirty','2026-11-20T12:00:00Z',200000,'bad',6),observed('ninety','2026-11-20T12:00:00Z',0,'ok',8),observed('unscored','2026-11-20T12:00:00Z',null),observed('zero','2026-11-20T12:00:00Z',200000,'bad',0),observed('alpha','2026-11-20T12:00:00Z',0,'ok',8)];
+  evaluate(b,'history='+JSON.stringify(rows));
+  assert.equal(evaluate(b,'fleetOrder('+JSON.stringify(['never','unscored','ninety','thirty','zero','alpha'].map(host=>({host})))+').map(n=>n.host).join(",")'),'zero,thirty,alpha,ninety,unscored,never');
+});
+test('run identity excludes manual successes and removal completes the pending run', async () => {
+  const b=fleetBrowser(1); fakeClock(b);
+  evaluate(b,'activeRun={hosts:new Set([fleet[0].host]),pending:new Set([fleet[0].host]),done:0,failed:0}');
+  b.context.fetch=async()=>({ok:true,json:async()=>observed('0.example','2026-11-20T12:00:00Z',0,'ok')});
+  await evaluate(b,'performCheck(fleet[0])'); assert.equal(evaluate(b,'activeRun.pending.size'),1); assert.equal(evaluate(b,'lastCheckAll'),null);
+  b.element('fleet-list').children[0].children.at(-1).onclick();
+  assert.equal(evaluate(b,'activeRun'),null); assert.ok(evaluate(b,'lastCheckAll'));
+});
+test('run failures render exact partial and zero-done reason without stamping', async () => {
+  const b=fleetBrowser(2), clock=fakeClock(b); let attempts=0;
+  b.context.fetch=async(url,options)=>({ok:++attempts===1,json:async()=>attempts===1?observed(JSON.parse(options.body).host,'2026-11-20T12:00:00Z',0,'ok'):{error:'invalid_host'}});
+  const run=b.element('check-all').click(); await flush(); await clock.tick(); await run;
+  assert.equal(b.element('fleet-progress').textContent,'Checked 1 of 2 nodes — the rest could not be measured this time.'); assert.equal(evaluate(b,'lastCheckAll'),null);
+  const c=fleetBrowser(1); c.context.fetch=async()=>{throw Error('offline')}; await c.element('check-all').click();
+  assert.equal(c.element('fleet-progress').textContent,'The checks could not be completed — '+c.element('check-result').textContent); assert.equal(evaluate(c,'lastCheckAll'),null);
+});
+test('429 retry carrying a dead run checks but cannot stamp the replacement run', async () => {
+  const b=fleetBrowser(1), clock=fakeClock(b);
+  b.context.fetch=async()=>({ok:false,json:async()=>({error:'check_too_frequent'})});
+  await b.element('check-all').click();
+  evaluate(b,'activeRun={hosts:new Set(["other"]),pending:new Set(["other"]),done:0,failed:0}');
+  b.context.fetch=async()=>({ok:true,json:async()=>observed('0.example','2026-11-20T12:00:00Z',0,'ok')});
+  await clock.tick(); assert.equal(evaluate(b,'lastCheckAll'),null); assert.equal(evaluate(b,'activeRun.done'),0);
+});
+test('best score ties choose the latest date and qualify a different UTC year', () => {
+  const b=browser();
+  evaluate(b,'history='+JSON.stringify([observed('a','2026-11-14T12:00:00Z',3,'ok'),observed('a','2026-11-15T12:00:00Z',3,'ok')]));
+  assert.equal(evaluate(b,'bestFor("a")'),'Best so far: 95 · 15 Nov');
+  evaluate(b,'history='+JSON.stringify([observed('a','2025-12-31T12:00:00Z',3,'ok'),observed('a','2026-11-15T12:00:00Z',11,'ok')]));
+  assert.equal(evaluate(b,'bestFor("a")'),'Best so far: 95 · 31 Dec 2025');
+});
+test('strip inflects counts, qualifies old dates and preserves children for unchanged text', () => {
+  const b=fleetBrowser(1);
+  assert.equal(b.element('fleet-strip').textContent,'1 watched · 0 healthy · 1 needs a look');
+  const children=b.element('fleet-strip').children.slice(); evaluate(b,'progress.set(fleet[0].host,"CHECKING");renderFleet()');
+  assert.ok(children.every((child,i)=>b.element('fleet-strip').children[i]===child));
+  assert.equal(fleetBrowser(2).element('fleet-strip').textContent,'2 watched · 0 healthy · 2 need a look');
+  process.env.TZ='UTC';
+  b.context.Date=class extends Date { constructor(...args){super(...(args.length?args:['2026-11-21T13:00:00Z']));} static now(){return Date.parse('2026-11-21T13:00:00Z');} };
+  evaluate(b,'lastCheckAll="2026-11-20T12:04:00Z";renderFleet()');
+  assert.equal(b.element('fleet-strip').textContent,'1 watched · 0 healthy · 1 needs a look · last check-all 12:04 · 20 Nov');
+  evaluate(b,'lastCheckAll="2026-11-21T12:04:00Z";renderFleet()');
+  assert.equal(b.element('fleet-strip').textContent,'1 watched · 0 healthy · 1 needs a look · last check-all 12:04');
+});
+test('stale accessibility names and refresh events follow the exact crossed boundary', () => {
+  assert.match(html,/id="score-value" aria-describedby="score-freshness"/);
+  const b=browser(); let now=Date.parse('2026-11-21T12:00:00Z'); const events=b.events,timers=new Map(); let id=0;
+  b.context.Date=class extends Date {constructor(...args){super(...(args.length?args:[now]));} static now(){return now;}};
+  b.context.setTimeout=(callback,delay)=>{timers.set(++id,{callback,delay});return id;}; b.context.clearTimeout=id=>timers.delete(id);
+  const r=observed('a','2026-11-20T12:00:00Z',0,'ok');
+  evaluate(b,'history=['+JSON.stringify(r)+']; fleet=[{host:"a",label:"A"}];lastReport=history[0];document.getElementById("report").hidden=false;renderFleet();renderReportExtras(lastReport)');
+  const dd=()=>b.element('fleet-list').children[0].children[2].children[4].children[1];
+  assert.equal(dd().ariaLabel,undefined); assert.equal(timers.size,1); assert.equal([...timers.values()][0].delay,50);
+  now++; b.context.document.visibilityState='visible'; events.visibilitychange();
+  assert.equal(dd().ariaLabel,'100, stale, checked 1 day ago'); assert.match(b.element('score-freshness').textContent,/STALE/); assert.equal(timers.size,0);
+  now=Date.parse(r.checkedAt); events.focus(); assert.equal(dd().ariaLabel,undefined); assert.equal(timers.size,1);
+  now+=86400051; [...timers.values()][0].callback(); assert.equal(dd().ariaLabel,'100, stale, checked 1 day ago');
+});
+test('sample blockchain sync number uses the same monospace markup as its breakdown', () => {
+  assert.match(html, /Blockchain sync <span class="ok"><span class="num">3<\/span> blocks behind the network<\/span>/);
+});
+test('throwing storage survives load, rendering and successful check persistence', async () => {
+  const b=browser({throwingStorage:true,checkResponse:observed('example.com','2026-11-20T12:00:00Z',0,'ok')});
+  await b.element('signin').click(); await runCheck(b);
+  assert.equal(evaluate(b,'history.length'),1); assert.equal(b.element('check-result').textContent,'Healthy');
+  assert.doesNotThrow(()=>evaluate(b,'renderFleet();renderReportExtras(lastReport);persistFleet()'));
+});
+test('fleet counts stay consistent across add, check and removal of the last filtered match', async () => {
+  const b=browser({checkResponse:observed('example.com','2026-11-20T12:00:00Z',0,'ok')});
+  b.element('node-host').value='example.com';b.element('own-node').checked=true;await b.element('add-node').click();
+  assert.equal(b.element('fleet-strip').textContent,'1 watched · 0 healthy · 1 needs a look');
+  await runCheck(b); assert.equal(b.element('fleet-strip').textContent,'1 watched · 1 healthy · 0 need a look');
+  assert.deepEqual(b.element('fleet-filters').children.map(c=>c.textContent),['All 1','Needs attention 0','Healthy 1']);
+  evaluate(b,'setFleetFilter("healthy")'); b.element('fleet-list').children[0].children.at(-1).onclick();
+  assert.equal(b.element('fleet-list').children[0].children[0].textContent,'No nodes yet');
+  evaluate(b,'fleet.push({host:"other",label:"Other"});renderFleet()');
+  assert.equal(b.element('fleet-list').children[0].children[0].textContent,'No nodes match');
+  assert.equal(b.element('fleet-strip').textContent,'1 watched · 0 healthy · 1 needs a look');
+});
+test('removing the last healthy filtered match leaves the no-match state', () => {
+  const b=browser({storage:new Map([['nhr:fleet',JSON.stringify([{host:'a',label:'A'},{host:'unchecked',label:'Unchecked'}])],['nhr:history',JSON.stringify([observed('a','2026-11-20T12:00:00Z',0,'ok')])]])});
+  evaluate(b,'setFleetFilter("healthy")'); b.element('fleet-list').children[0].children.at(-1).onclick();
+  assert.equal(b.element('fleet-list').children[0].children[0].textContent,'No nodes match');
+  assert.deepEqual(b.element('fleet-filters').children.map(c=>c.textContent),['All 1','Needs attention 1','Healthy 0']);
+});
+test('L6 legacy report renders and completes share and proof exports', async () => {
+  const r={...observed('legacy','2026-11-20T12:00:00Z',3,'ok'),sections:{status:{level:'ok',line:'Healthy'}}};delete r.fixes;
+  const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+  const created=[]; const create=b.context.document.createElement;
+  b.context.document.createElement=tag=>{
+    const el=create(tag); created.push({tag,el}); el.click=()=>{};
+    if(tag==='canvas'){el.getContext=()=>({fillRect(){},fillText(){}});el.toBlob=cb=>cb({});} return el;
+  };
+  b.context.File=class {};b.context.Blob=class {};b.context.navigator={};b.context.URL={createObjectURL:()=> 'blob:fixture',revokeObjectURL(){}};
+  await b.element('share-card').click(); b.element('proof-download').click();
+  assert.ok(created.some(x=>x.tag==='canvas')); assert.equal(created.filter(x=>x.tag==='a').length,2);
+  assert.match(evaluate(b,'proofText(lastReport)'),/Sync: Unknown\nPorts: Unknown/);
+});
+test('gate repair matrix preserves valid fields and flags only actual changes', () => {
+  const b=browser(), valid=observed('a','2026-11-20T12:00:00.000Z',0,'ok');
+  for(const [field,values] of [['syncGap',[-1,1.5,'1',{}]],['portsOpen',[-1,11,9.5,'10',{}]]]) for(const value of values) {
+    evaluate(b,'storageRepaired=false');
+    assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify({...valid,[field]:value})+')['+JSON.stringify(field)+']'),null);
+    assert.equal(evaluate(b,'storageRepaired'),true);
+  }
+  for(const fixes of [undefined,null,{},'broken',[null,3,{}, {title:3}]]) {
+    const r={...valid,fixes}; const c=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+    assert.equal(evaluate(c,'lastReport.fixes.length'),0); assert.equal(c.element('storage-repaired').hidden,false);
+    assert.match(c.element('score-value').textContent,/100 of 100/);
+  }
+  for(const ports of [undefined,null,{},'absent']) {
+    const r={...valid,ports}; evaluate(b,'storageRepaired=false');
+    assert.equal(evaluate(b,'JSON.stringify(sanitizeReport('+JSON.stringify(r)+').ports)'),undefined);
+    assert.equal(evaluate(b,'storageRepaired'),ports !== undefined);
+  }
+  for(const section of [null,3,{}, {level:'ok'}]) {
+    const r={...valid,sections:{...valid.sections,sync:section,ports:section}};
+    assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify(r)+').sections.sync.line'),'Unknown');
+  }
+  const c=browser({storage:new Map([['nhr:lastReport',JSON.stringify({...valid,checkedAt:'invalid'})]])});
+  assert.equal(evaluate(c,'lastReport'),null); assert.equal(c.element('check-node').textContent,'');
+  const d=browser({storage:new Map([['nhr:history','{}'],['nhr:fleet','{}'],['nhr:lastCheckAll','42']])});
+  assert.equal(evaluate(d,'history.length+fleet.length'),0); assert.equal(evaluate(d,'lastCheckAll'),null); assert.equal(d.element('storage-repaired').hidden,false);
+});
+test('fresh response gate repairs optional fields and retains a live future response', async () => {
+  for(const checkedAt of ['2026-11-20T12:00:00Z',new Date(Date.now()+360000).toISOString()]) {
+    const r={...observed('example.com',checkedAt,0,'ok'),fixes:{}};
+    const b=browser({checkResponse:r});await runCheck(b);
+    assert.equal(evaluate(b,'history.length'),1);assert.equal(evaluate(b,'lastReport.checkedAt'),new Date(Date.parse(checkedAt)).toISOString());
+  }
+});
+
+test('E1 malformed status and fixes boot, render, share and prove without undefined', async () => {
+  const variants = [
+    {status:'broken'}, {status:{}}, {status:{level:'bad'}}, {status:null}, {status:false},
+    {fixes:[{title:'Repair'}]}, {fixes:[{title:'Repair',why:42}]},
+    {status:{level:'error',line:'Unknown state'}},
+  ];
+  for (const variant of variants) {
+    const r=observed('a','2026-11-20T12:00:00Z',100,'bad');
+    if ('status' in variant) r.sections={...r.sections,status:variant.status};
+    if (variant.fixes) r.fixes=variant.fixes;
+    const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+    const drawn=[], blobs=[]; const create=b.context.document.createElement;
+    b.context.document.createElement=tag=>{const el=create(tag);el.click=()=>{};
+      if(tag==='canvas'){el.getContext=()=>({fillRect(){},fillText(text){drawn.push(text);}});el.toBlob=cb=>cb({});}return el;};
+    b.context.File=class {};b.context.Blob=class {constructor(parts){blobs.push(parts.join(''));}};
+    b.context.navigator={};b.context.URL={createObjectURL:()=> 'blob:fixture',revokeObjectURL(){}};
+    await b.element('share-card').click();b.element('proof-download').click();
+    const output=['check-node','report-history','fixes','score-value'].map(id=>b.element(id).textContent).join(' ');
+    assert.doesNotMatch(output+drawn.join(' ')+blobs.join(' ')+evaluate(b,'proofText(lastReport)'),/undefined/);
+    assert.ok(drawn.length); assert.ok(blobs.length);
+    if (variant.fixes) assert.equal(b.element('fixes').textContent,'Repair');
+    if (variant.status?.level==='error') assert.equal(evaluate(b,'lastReport.sections.status.level'),'');
+    if (typeof variant.status==='string' || variant.status && !variant.status.line) assert.equal(b.element('check-node').textContent,'Unknown');
+  }
+});
+
+test('E3 history syncGap 100 governs divergent lastReport syncGap 0 before rendering', () => {
+  const record=observed('a','2026-11-20T12:00:00Z',100,'ok');
+  const storage=new Map([['nhr:history',JSON.stringify([record])],['nhr:lastReport',JSON.stringify({...record,syncGap:0})]]);
+  const b=browser({storage});
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.match(b.element('score-value').textContent,/80 of 100/);
+  assert.equal(evaluate(b,'scoreFor(latestFor("a")).value'),80);
+  assert.match(b.element('fleet-list').textContent,/80/);
+  assert.doesNotMatch(evaluate(b,'cardLines(lastReport).join(" ")'),/100 of 100/);
+});
+
+function boundaryClock(b, initial) {
+  let now=initial, id=0; const timers=new Map();
+  b.context.Date=class extends Date {constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
+  b.context.setTimeout=(callback,delay)=>{timers.set(++id,{callback,delay,at:now+delay});return id;};
+  b.context.clearTimeout=id=>timers.delete(id);
+  return {timers, async fire(id){const timer=timers.get(id);assert.ok(timer);timers.delete(id);now=timer.at;const result=timer.callback();await flush();return result;}};
+}
+
+test('E4 manual 429 then check-all 429 shares the retry and stamps the waiting run', async () => {
+  const b=fleetBrowser(1), clock=boundaryClock(b,Date.parse('2026-11-20T12:00:00Z')); let attempts=0;
+  b.context.fetch=async()=>{const success=++attempts>2;return {ok:success,json:async()=>success?observed('0.example','2026-11-20T12:02:00Z',0,'ok'):{error:'check_too_frequent'}};};
+  await evaluate(b,'performCheck(fleet[0])');
+  const retryId=evaluate(b,'queuedTimers.get(fleet[0].host)');
+  const run=b.element('check-all').click();await flush();
+  await clock.fire([...clock.timers.keys()].find(id=>id!==retryId));await run;
+  assert.equal(attempts,2);assert.equal(evaluate(b,'retryWaiters.get(fleet[0].host).size'),1);
+  const retry=clock.fire(evaluate(b,'queuedTimers.get(fleet[0].host)'));await flush();
+  await clock.fire([...clock.timers.keys()][0]);await retry;
+  assert.equal(attempts,3);assert.equal(evaluate(b,'activeRun'),null);assert.ok(evaluate(b,'lastCheckAll'));
+});
+
+test('E4 entitlement abort cancels node 1 queued retry and prevents zombie checks', async () => {
+  const b=fleetBrowser(2), clock=boundaryClock(b,Date.parse('2026-11-20T12:00:00Z'));let attempts=0;
+  b.context.fetch=async()=>({ok:false,json:async()=>({error:++attempts===1?'check_too_frequent':'no_completed_check'})});
+  const run=b.element('check-all').click();await flush();
+  const retryId=evaluate(b,'queuedTimers.get(fleet[0].host)');
+  const paceId=[...clock.timers.keys()].find(id=>id!==retryId);
+  await clock.fire(paceId);await run;
+  assert.equal(evaluate(b,'activeRun'),null);assert.equal(evaluate(b,'queuedTimers.size'),0);
+  assert.equal(clock.timers.has(retryId),false);assert.equal(evaluate(b,'progress.size'),0);
+  assert.match(b.element('fleet-progress').textContent,/could not be completed/);
+  for(const id of [...clock.timers.keys()]) await clock.fire(id);
+  assert.equal(attempts,2);assert.equal(evaluate(b,'lastCheckAll'),null);
+});
+
+test('E5 hidden filtered fleet still schedules freshness', () => {
+  const b=browser(), now=Date.parse('2026-11-21T12:00:00Z'), clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now-86400000+1000).toISOString(),0,'ok');
+  evaluate(b,'history=['+JSON.stringify(r)+'];fleet=[{host:"a",label:"A"}];setFleetFilter("attention")');
+  assert.equal(b.element('fleet-list').children[0].children[0].textContent,'No nodes match');
+  assert.equal([...clock.timers.values()][0].delay,1050);
+});
+
+test('E6 live repair and ten-minute server clock skew store sanitized reports without load hint', async () => {
+  for(const ahead of [0,600000]) {
+    const r={...observed('example.com',new Date(Date.now()+ahead).toISOString(),0,'ok'),fixes:[{title:'Repair',why:3}],ports:{}};
+    const storage=new Map(), b=browser({storage,checkResponse:r});await runCheck(b);
+    assert.equal(evaluate(b,'lastReport.checkedAt'),r.checkedAt);
+    assert.equal(evaluate(b,'lastReport.fixes[0].why'),'');assert.equal(evaluate(b,'"ports" in lastReport'),false);
+    assert.equal(b.element('storage-repaired').hidden,true);assert.equal(evaluate(b,'storageRepaired'),false);
+    assert.equal(JSON.parse(storage.get('nhr:lastReport')).fixes[0].why,'');
+  }
+});
+
+test('E6 uninterpretable live response fails the run and stores nothing', async () => {
+  const b=fleetBrowser(1);b.context.fetch=async()=>({ok:true,json:async()=>({host:'0.example',checkedAt:'invalid'})});
+  await b.element('check-all').click();
+  assert.equal(b.element('check-result').textContent,'We could not run your check. Please try again.');
+  assert.equal(evaluate(b,'history.length'),0);assert.equal(evaluate(b,'lastReport'),null);
+  assert.equal(evaluate(b,'lastCheckAll'),null);assert.equal(evaluate(b,'activeRun'),null);
+  assert.equal(evaluate(b,'localStorage.getItem(REPORT_KEY)'),null);assert.equal(evaluate(b,'storageRepaired'),false);
+});
+
+test('E7 gate-legal four-minute future report crosses stale at its true boundary', async () => {
+  const b=browser(),now=Date.parse('2026-11-21T12:00:00Z'),clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now+240000).toISOString(),0,'ok');
+  evaluate(b,'history=[sanitizeReport('+JSON.stringify(r)+')];fleet=[{host:"a",label:"A"}];renderFleet()');
+  const [id,timer]=[...clock.timers.entries()][0];assert.equal(timer.delay,86400000+240000+50);
+  assert.doesNotMatch(b.element('fleet-list').textContent,/STALE/);
+  await clock.fire(id);
+  assert.match(b.element('fleet-list').textContent,/STALE/);
+});
+
+test('F1 identical live replay is one identity and cannot mint best-so-far', async () => {
+  const r=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+  const b=browser({checkResponse:r});
+  await runCheck(b);await evaluate(b,'performCheck(fleet[0])');
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.doesNotMatch(b.element('fleet-list').textContent+b.element('report-best').textContent,/Best so far/);
+});
+
+test('F1 conflicting live replay replaces measurements on every surface and survives reload', async () => {
+  for (const stored of [false,true]) {
+    const early=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+    const later={...early,syncGap:100};
+    const storage=new Map(stored?[['nhr:history',JSON.stringify([early])],['nhr:lastReport',JSON.stringify(early)]]:[]);
+    const b=browser({storage,checkResponse:early});
+    if (!stored) await runCheck(b);
+    b.context.fetch=async()=>({ok:true,json:async()=>later});
+    await evaluate(b,'performCheck({host:"example.com"})');
+    for (const view of [b,browser({storage})]) {
+      assert.equal(evaluate(view,'history.length'),1);
+      assert.equal(evaluate(view,'lastReport === history[0]'),true);
+      assert.equal(evaluate(view,'lastReport.syncGap'),100);
+      assert.equal(evaluate(view,'bestFor("example.com")'),null);
+      assert.equal(evaluate(view,'scoreFor(latestFor("example.com")).value'),80);
+      assert.match(view.element('score-value').textContent,/80 of 100/);
+      assert.match(view.element('fleet-list').textContent,/80/);
+      assert.match(evaluate(view,'cardLines(lastReport).join(" ")'),/80/);
+      assert.match(evaluate(view,'proofText(lastReport)'),/Sync gap: 100/);
+    }
+  }
+});
+
+test('F2 wrong-host 200 fails the run without changing observations or report storage', async () => {
+  const b=fleetBrowser(1);
+  const prior=observed('0.example','2026-11-20T12:00:00Z',100,'ok');
+  evaluate(b,'lastReport=upsertReport('+JSON.stringify(prior)+');persistFleet();localStorage.setItem(REPORT_KEY,JSON.stringify(lastReport))');
+  const before=evaluate(b,'JSON.stringify([history,lastReport,localStorage.getItem(REPORT_KEY),localStorage.getItem(HISTORY_KEY)])');
+  b.context.fetch=async()=>({ok:true,json:async()=>observed('other.example',prior.checkedAt,0,'ok')});
+  await b.element('check-all').click();
+  assert.equal(b.element('check-result').textContent,'We could not run your check. Please try again.');
+  assert.equal(evaluate(b,'JSON.stringify([history,lastReport,localStorage.getItem(REPORT_KEY),localStorage.getItem(HISTORY_KEY)])'),before);
+  assert.equal(evaluate(b,'activeRun'),null);assert.equal(evaluate(b,'lastCheckAll'),null);
+  assert.equal(evaluate(b,'latestFor("other.example")'),undefined);
+});
+
+test('F3 live ten-minute skew schedules its true stale boundary on an idle page', async () => {
+  const now=Date.parse('2026-11-21T12:00:00Z');
+  const b=browser({checkResponse:observed('example.com',new Date(now+600000).toISOString(),0,'ok')});
+  const clock=boundaryClock(b,now);await runCheck(b);
+  const [id,timer]=[...clock.timers.entries()][0];
+  assert.equal(timer.delay,86400000+600000+50);
+  assert.doesNotMatch(b.element('fleet-list').textContent,/STALE/);
+  await clock.fire(id);assert.match(b.element('fleet-list').textContent,/STALE/);
+});
+
+test('F3 browser timer cap recomputes until the accepted boundary', async () => {
+  const now=Date.parse('2026-11-21T12:00:00Z'), b=browser(), clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now+2147483647).toISOString(),0,'ok');
+  evaluate(b,'history=[sanitizeReport('+JSON.stringify(r)+','+(now+2147483647)+',{live:true})];fleet=[{host:"a",label:"A"}];renderFleet()');
+  const [id,timer]=[...clock.timers.entries()][0];assert.equal(timer.delay,2147483647);
+  await clock.fire(id);assert.equal([...clock.timers.values()][0].delay,86400000+50);
+});
+
+test('F4 status object without a line is retained, repaired and exported through load', () => {
+  const r=observed('a','2026-11-20T12:00:00Z',100,'ok');r.sections.status={};
+  const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+  assert.equal(evaluate(b,'lastReport.host'),'a');assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'JSON.stringify(lastReport.sections.status)'),JSON.stringify({level:'',line:'Unknown'}));
+  assert.equal(b.element('check-node').textContent,'Unknown');
+  assert.match(evaluate(b,'proofText(lastReport)'),/Unknown/);
+  assert.doesNotMatch(evaluate(b,'proofText(lastReport)'),/undefined/);
+});
+
+test('F6 display scalars repair to null and render unknown or absent', () => {
+  for (const field of ['networkLedger','nodeLedger','currentProtocolVersion']) for (const value of [-1,1.5,'corrupt',{},null]) {
+    const r={...observed('a','2026-11-20T12:00:00.000Z',0,'ok'),[field]:value};
+    const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+    assert.equal(evaluate(b,'lastReport.'+field),null);
+    assert.equal(evaluate(b,'storageRepaired'),value!==null);
+    assert.doesNotMatch(b.element('fleet-list').textContent+b.element('network-observation').textContent+evaluate(b,'proofText(lastReport)'),/corrupt|\[object Object\]/);
+    if(field==='currentProtocolVersion') assert.equal(b.element('network-note').hidden,true);
+  }
+});
+
+test('F6 complete ports govern count while partial arrays retain the standing split', () => {
+  const ports=Array.from({length:10},(_,i)=>({port:31400+i,open:i<3}));
+  for (const complete of [true,false]) {
+    const r={...observed('a','2026-11-20T12:00:00.000Z',0,'ok'),ports:complete?ports:ports.slice(0,3),portsOpen:10};
+    const b=browser();
+    evaluate(b,'storageRepaired=false;lastReport=sanitizeReport('+JSON.stringify(r)+')');
+    assert.equal(evaluate(b,'lastReport.portsOpen'),complete?3:10);
+    assert.equal(evaluate(b,'storageRepaired'),complete);
+  }
+});
+
+test('G1(a) non-string checkedAt drops stored envelopes and fails live checks', async () => {
+  for (const checkedAt of [['2026-11-20T12:00:00Z'], 2026, { value: '2026-11-20T12:00:00Z' }]) {
+    const r=observed('example.com',checkedAt,0,'ok');
+    const storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',JSON.stringify(r)]]);
+    const loaded=browser({storage});
+    assert.equal(evaluate(loaded,'history.length'),0);
+    assert.equal(evaluate(loaded,'lastReport'),null);
+    assert.equal(evaluate(loaded,'storageRepaired'),true);
+    assert.deepEqual(JSON.parse(storage.get('nhr:history')),[]);
+    const liveStorage=new Map(), live=browser({storage:liveStorage,checkResponse:r});
+    await runCheck(live);
+    assert.equal(live.element('check-result').textContent,'We could not run your check. Please try again.');
+    assert.equal(evaluate(live,'history.length'),0);
+    assert.equal(evaluate(live,'lastReport'),null);
+    assert.equal(liveStorage.has('nhr:lastReport'),false);
+    assert.deepEqual(JSON.parse(liveStorage.get('nhr:history')),[]);
+    assert.equal(evaluate(live,'storageRepaired'),false);
+  }
+});
+
+test('G1(b) stored timestamp aliases collapse to one distinct check with last arrival winning', () => {
+  const first=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+  const second={...first,checkedAt:'2026-11-20T06:00:00-06:00',syncGap:100};
+  const storage=new Map([['nhr:history',JSON.stringify([first,second])]]), b=browser({storage});
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'history[0].checkedAt'),'2026-11-20T12:00:00.000Z');
+  assert.equal(evaluate(b,'history[0].syncGap'),100);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.equal(evaluate(b,'storageRepaired'),true);
+  assert.equal(JSON.parse(storage.get('nhr:history')).length,1);
+});
+
+test('G1(c) live offset alias replaces the stored canonical check without a repair hint', async () => {
+  const first=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const second={...first,checkedAt:'2026-11-20T06:00:00-06:00',syncGap:100};
+  const storage=new Map([['nhr:history',JSON.stringify([first])]]), b=browser({storage,checkResponse:second});
+  await runCheck(b);
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.equal(evaluate(b,'lastReport.syncGap'),100);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.equal(evaluate(b,'storageRepaired'),false);
+  assert.equal(b.element('storage-repaired').hidden,true);
+  for (const r of [JSON.parse(storage.get('nhr:lastReport')), ...JSON.parse(storage.get('nhr:history'))]) {
+    assert.equal(r.checkedAt,first.checkedAt);
+    assert.equal(r.syncGap,100);
+  }
+});
+
+test('G1(d) canonical backend spelling passes byte-identical without storage repair', () => {
+  const r=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const raw=JSON.stringify(r), storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',raw]]);
+  const b=browser({storage});
+  assert.equal(evaluate(b,'JSON.stringify(sanitizeReport(lastReport))'),raw);
+  assert.equal(evaluate(b,'storageRepaired'),false);
+  assert.equal(b.element('storage-repaired').hidden,true);
+  assert.equal(storage.get('nhr:lastReport'),raw);
+  assert.equal(storage.get('nhr:history'),JSON.stringify([r]));
+});
+
+test('G1(e) history and alias lastReport retain one canonical copy across reload', () => {
+  const r=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',JSON.stringify({...r,checkedAt:'2026-11-20T06:00:00-06:00'})]]);
+  for (let reload=0;reload<2;reload++) {
+    const b=browser({storage});
+    assert.equal(evaluate(b,'history.length'),1);
+    assert.equal(evaluate(b,'lastReport === history[0]'),true);
+    assert.equal(evaluate(b,'lastReport.checkedAt'),r.checkedAt);
+    assert.equal(evaluate(b,'bestFor("example.com")'),null);
+    assert.equal(JSON.parse(storage.get('nhr:history')).length,1);
+    assert.equal(JSON.parse(storage.get('nhr:history'))[0].checkedAt,r.checkedAt);
+  }
 });
