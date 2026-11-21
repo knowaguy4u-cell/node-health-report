@@ -473,7 +473,7 @@ test('verdict hero reflects empty, healthy, and attention states with monospace 
   assert.equal(okBrowser.element('fleet-verdict').className, 'verdict-ok');
   assert.deepEqual(okBrowser.element('fleet-verdict').children.filter(c => c.className).map(c => [c.textContent, c.className]), [['1', 'num ok']]);
 
-  const warn = observed('warn.example', '2026-11-20T12:00:00Z', 25, 'warn');
+  const warn = observed('warn.example', '2026-11-20T12:00:00Z', 25, 'warn', 4);
   const warnBrowser = browser({ storage: new Map([
     ['nhr:fleet', JSON.stringify([{ host: warn.host, label: 'Warn' }])],
     ['nhr:history', JSON.stringify([warn])],
@@ -649,4 +649,92 @@ test('score fix Testnet2 line follows the measured ports and the bigger lever', 
   legacy.ports = allPorts;
   legacy.fixes = [{ title: 'Open the missing ports', why: '', how: '' }];
   assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(legacy) + ', scoreFor(' + JSON.stringify(legacy) + '))'), 'Nothing you can open — the unpublished ports belong to the software, not your setup.');
+});
+
+test('round three breakdown uses measured points and clears rows for unscored legacy reports', () => {
+  const b = browser();
+  for (const [gap, points] of [[0,50],[3,45],[11,30],[1001,15],[100001,0]]) {
+    const r = observed('a', new Date().toISOString(), gap, 'ok', 8);
+    evaluate(b, 'renderReportExtras(' + JSON.stringify(r) + ')');
+    const rows = b.element('score-breakdown');
+    assert.equal(rows.hidden, false);
+    assert.equal(rows.children[0].textContent, 'Ports — 8 of 10 open · 40 points');
+    assert.equal(rows.children[1].textContent, 'Sync — ' + gap + ' blocks behind the network · ' + points + ' points');
+    assert.match(b.element('score-value').textContent, new RegExp('^' + (40 + points) + ' of 100'));
+    assert.ok(rows.children.every(row => row.children.some(c => c.className === 'num')));
+  }
+  evaluate(b, 'renderReportExtras({host:"legacy"})');
+  assert.equal(b.element('score-breakdown').hidden, true);
+  assert.equal(b.element('score-breakdown').children.length, 0);
+  assert.equal(b.element('score-value').textContent, "Not scored yet — enter your node's current ledger so sync can be measured.");
+});
+
+test('round three best score requires two scored stored checks and appears on card and report', () => {
+  const a = observed('a', '2026-11-14T12:00:00Z', 3, 'ok');
+  const z = observed('a', '2026-11-15T12:00:00Z', 11, 'warn', 8);
+  const b = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(z)], ['nhr:history', JSON.stringify([a,z])]]) });
+  assert.equal(evaluate(b, 'bestFor("a")'), 'Best so far: 95 · 14 Nov');
+  assert.equal(b.element('report-best').textContent, 'Best so far: 95 · 14 Nov');
+  assert.match(b.element('fleet-list').textContent, /Best so far: 95 · 14 Nov/);
+  evaluate(b, 'history = ' + JSON.stringify([a, {...z, syncGap:null}, {...z, host:'other'}]));
+  assert.equal(evaluate(b, 'bestFor("a")'), null);
+});
+
+test('round three fleet filters share exact counts and worst-first ordering without persistence', () => {
+  const reports = [observed('good', new Date().toISOString(), 0, 'ok'), observed('low', new Date().toISOString(), 200000, 'bad', 1), observed('bad-section', new Date().toISOString(), 0, 'ok')];
+  reports[2].sections.ports = { ...reports[2].sections.ports, level: 'bad' };
+  const storage = new Map([['nhr:fleet', JSON.stringify(['good','new','bad-section','low'].map(host => ({host,label:host})))], ['nhr:history', JSON.stringify(reports)]]);
+  const b = browser({storage}), before = Array.from(storage.entries());
+  assert.equal(evaluate(b, 'fleetHealth({})'), 'attention');
+  assert.equal(b.element('fleet-strip').textContent, '4 watched · 1 healthy · 3 needs a look');
+  assert.deepEqual(b.element('fleet-filters').children.map(c => c.textContent), ['All 4','Needs attention 3','Healthy 1']);
+  assert.deepEqual(b.element('fleet-list').children.map(c => c.children[1].textContent), ['low','good','bad-section','new']);
+  b.element('fleet-filters').children[1].onclick();
+  assert.deepEqual(b.element('fleet-list').children.map(c => c.children[1].textContent), ['low','bad-section','new']);
+  assert.match(b.element('fleet-list').children.at(-1).textContent, /Not checked yet/);
+  b.element('fleet-filters').children[2].onclick();
+  assert.equal(b.element('fleet-list').children.length, 1);
+  assert.equal(b.element('fleet-filters').children[2].ariaPressed, 'true');
+  assert.deepEqual(Array.from(storage.entries()), before);
+  assert.equal(browser({storage}).element('fleet-list').children.length, 4);
+});
+
+test('round three stale threshold strikes only score digits and keeps fresh rendering', () => {
+  const now = Date.now(), r = observed('a', new Date(now - 2 * 86400000).toISOString(), 0, 'ok');
+  const b = browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+  assert.equal(evaluate(b, 'staleAge(' + JSON.stringify(r) + ',' + now + ')'), 'checked 2 days ago');
+  assert.equal(evaluate(b, 'staleAge({checkedAt:"invalid"})'), null);
+  assert.equal(evaluate(b, 'staleAge({checkedAt:new Date(' + now + '-STALE_AFTER_MS).toISOString()},' + now + ')'), null);
+  assert.match(b.element('score-value').children[0].className, /stale-score/);
+  assert.equal(b.element('score-value').children.at(-1).className, undefined);
+  assert.equal(b.element('score-freshness').textContent, 'STALE · checked 2 days ago');
+  assert.equal(b.element('fleet-list').children[0].children[2].children[4].children[1].className, 'stale-score');
+  evaluate(b, 'renderReportExtras(' + JSON.stringify({...r,checkedAt:new Date(now).toISOString()}) + ')');
+  assert.equal(b.element('score-value').children[0].className, 'num ok');
+  assert.equal(b.element('score-freshness').hidden, true);
+});
+
+test('round three check-all timestamp is stored only after real successful completion and restored', async () => {
+  const r = observed('a', new Date().toISOString(), null), storage = new Map([['nhr:fleet',JSON.stringify([{host:'a',label:'A'}])]]);
+  const b = browser({storage,checkResponse:r});
+  assert.doesNotMatch(b.element('fleet-strip').textContent, /last check-all/);
+  await b.element('check-all').click();
+  assert.ok(Number.isFinite(Date.parse(JSON.parse(storage.get('nhr:lastCheckAll')))));
+  assert.match(browser({storage}).element('fleet-strip').textContent, /last check-all \d{2}:\d{2}$/);
+  const failedStorage = new Map([['nhr:fleet',JSON.stringify([{host:'a',label:'A'}])]]);
+  const failed = browser({storage:failedStorage,checkError:'no_completed_check'});
+  await failed.element('check-all').click();
+  assert.equal(failedStorage.has('nhr:lastCheckAll'), false);
+});
+
+test('round three queued check-all waits for the retry before recording completion', async () => {
+  const storage = new Map([['nhr:fleet', JSON.stringify([{host:'a',label:'A'}])], ['nhr:lastCheckAll', JSON.stringify('invalid')]]);
+  const b = browser({storage,checkError:'check_too_frequent'}), clock = fakeClock(b);
+  await b.element('check-all').click();
+  assert.doesNotMatch(b.element('fleet-strip').textContent, /last check-all/);
+  assert.equal(JSON.parse(storage.get('nhr:lastCheckAll')), 'invalid');
+  b.context.fetch = async () => ({ok:true,json:async () => observed('a',new Date().toISOString(),null)});
+  await clock.tick();
+  assert.ok(Number.isFinite(Date.parse(JSON.parse(storage.get('nhr:lastCheckAll')))));
+  assert.match(b.element('fleet-strip').textContent, /last check-all \d{2}:\d{2}$/);
 });

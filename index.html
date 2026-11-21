@@ -90,6 +90,10 @@
   }
   #network-observation .obs-val { color: #e6edf7; letter-spacing: .04em; }
   #fleet-verdict + .hint { margin: 0; max-width: 56ch; font-size: .95rem; line-height: 1.55; }
+  .stale-score { text-decoration: line-through; opacity: .65; }
+  #fleet-filters { display: flex; flex-wrap: wrap; gap: .5rem; }
+  #fleet-filters [aria-pressed="true"] { border-color: #34d399; }
+  .score-breakdown { border-top: 1px solid rgba(148,163,184,.22); }
   #fleet-list { margin: 1.45rem 0; }
   .fleet-entry {
     padding: 1.25rem 1.2rem;
@@ -326,6 +330,8 @@
     <p id="network-observation" class="mono">NETWORK LEDGER <span class="obs-val">—</span> · PROTOCOL <span class="obs-val">—</span></p>
     <h1 id="fleet-verdict" class="verdict-empty"><span class="num">0</span> nodes watched. <span class="num">0</span> need attention.</h1>
     <p class="hint">This view refreshes stored states when opened. Checks run here while this page is open.</p>
+    <p id="fleet-strip" aria-live="polite"></p>
+    <div id="fleet-filters" role="group" aria-label="Filter fleet"></div>
     <div id="fleet-list" aria-live="polite"></div>
     <button id="check-all">Check all</button>
     <p id="fleet-progress" role="status" aria-live="polite"></p>
@@ -358,7 +364,7 @@
     </ul>
     <p id="port-truth" class="hint">Measured from outside — what the network sees. Pi's built-in checker often disagrees; the outside check is the one that counts.</p>
     <p id="healthy-framing" class="hint">Judged by ledger progress against the network — a node can have the Pi app open and still be behind.</p>
-    <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value"></p><p id="score-fix"></p></section>
+    <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value"></p><div id="score-breakdown" class="score-breakdown" hidden></div><p id="score-freshness" hidden></p><p id="report-best" hidden></p><p id="score-fix"></p></section>
     <p id="report-trend" class="hint" hidden></p><p id="report-changes" class="hint" hidden></p>
     <p id="network-stall" class="hint" hidden></p><p id="testnet2-ports" class="hint" hidden></p>
     <p><button id="share-card" type="button" disabled>Share report card</button> <button id="proof-download" type="button" disabled>Download proof of check</button></p>
@@ -472,8 +478,8 @@
     if (!value || !value.sections || !Array.isArray(value.fixes)) return;
     [['check-node', 'status'], ['check-sync', 'sync'], ['check-ports', 'ports']].forEach(([id, section]) => {
       const row = document.getElementById(id);
-      renderWithNums(row, value.sections[section].line);
-      row.className = value.sections[section].level;
+      renderWithNums(row, value.sections[section]?.line ?? 'Unknown');
+      row.className = value.sections[section]?.level || '';
     });
     renderWithNums(document.getElementById('report-history'), 'Last check: ' + value.checkedAt + ' — ' + value.host + '. ' + value.sections.status.line);
   }
@@ -486,9 +492,15 @@
 
   const FLEET_KEY = 'nhr:fleet';
   const HISTORY_KEY = 'nhr:history';
+  const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+  const CHECK_ALL_KEY = 'nhr:lastCheckAll';
+  let fleetFilter = 'all';
+  let checkAllPending = null;
   function readStored(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
   }
+  let lastCheckAll = readStored(CHECK_ALL_KEY, null);
+  if (typeof lastCheckAll !== 'string' || !Number.isFinite(Date.parse(lastCheckAll))) lastCheckAll = null;
   let fleet = readStored(FLEET_KEY, []);
   if (!Array.isArray(fleet)) fleet = [];
   fleet = fleet.filter(n => n && typeof n.host === 'string' && typeof n.label === 'string');
@@ -515,6 +527,39 @@
     const gap = r.syncGap;
     const sync = gap === 0 ? 50 : gap <= 10 ? 45 : gap <= 1000 ? 30 : gap <= 100000 ? 15 : 0;
     return { value: r.portsOpen * 5 + sync, ports: r.portsOpen * 5, sync };
+  }
+  function bestFor(host) {
+    const scored = observations(host).filter(r => scoreFor(r));
+    if (scored.length < 2) return null;
+    const best = scored.reduce((a, b) => scoreFor(b).value > scoreFor(a).value ? b : a);
+    const date = new Date(best.checkedAt);
+    if (!Number.isFinite(date.getTime())) return null;
+    return 'Best so far: ' + scoreFor(best).value + ' · ' + date.getUTCDate() + ' ' + date.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
+  }
+  function fleetHealth(r) {
+    const score = scoreFor(r);
+    return score && score.value >= 70 && !Object.values(r?.sections || {}).some(section => section?.level === 'bad') ? 'healthy' : 'attention';
+  }
+  function fleetOrder(nodes) {
+    return nodes.slice().sort((a, b) => {
+      const ar = latestFor(a.host), br = latestFor(b.host);
+      if (!ar || !br) return Number(!ar) - Number(!br);
+      return (scoreFor(ar)?.value ?? Infinity) - (scoreFor(br)?.value ?? Infinity);
+    });
+  }
+  function staleAge(r, now = Date.now()) {
+    const elapsed = now - Date.parse(r?.checkedAt);
+    if (!Number.isFinite(elapsed) || elapsed <= STALE_AFTER_MS) return null;
+    const days = Math.floor(elapsed / 86400000);
+    return 'checked ' + days + (days === 1 ? ' day ago' : ' days ago');
+  }
+  function completeCheckAll(host) {
+    if (!checkAllPending) return;
+    checkAllPending.delete(host);
+    if (checkAllPending.size) return;
+    lastCheckAll = new Date().toISOString();
+    try { localStorage.setItem(CHECK_ALL_KEY, JSON.stringify(lastCheckAll)); } catch {}
+    checkAllPending = null;
   }
   function scoreBand(score) { return score >= 90 ? 'Healthy' : score >= 70 ? 'Good' : score >= 40 ? 'Needs a look' : 'At risk'; }
   function scoreFix(r, score) {
@@ -586,10 +631,18 @@
   function renderReportExtras(r) {
     document.getElementById('share-card').disabled=false; document.getElementById('proof-download').disabled=false;
     const score = scoreFor(r), block = document.getElementById('health-score'); block.hidden = false;
+    const breakdown = document.getElementById('score-breakdown'); breakdown.textContent = ''; breakdown.hidden = !score;
+    const age = staleAge(r), freshness = document.getElementById('score-freshness');
+    freshness.hidden = !age; freshness.textContent = '';
+    if (age) renderWithNums(freshness, 'STALE · ' + age);
+    const best = bestFor(r?.host), bestEl = document.getElementById('report-best'); bestEl.hidden = !best;
+    bestEl.textContent = ''; if (best) renderWithNums(bestEl, best);
     if (!score) { document.getElementById('score-value').textContent = "Not scored yet — enter your node's current ledger so sync can be measured."; document.getElementById('score-fix').textContent = ''; }
     else {
       const band = scoreBand(score.value), cls = band === 'Healthy' ? 'ok' : band === 'Good' || band === 'Needs a look' ? 'warn' : 'bad';
-      renderParts(document.getElementById('score-value'), [[String(score.value), 'num ' + cls], [' of '], ['100', 'num'], [' — ' + band]]);
+      renderParts(document.getElementById('score-value'), [[String(score.value), 'num ' + cls + (age ? ' stale-score' : '')], [' of '], ['100', 'num'], [' — ' + band]]);
+      renderWithNums(append(breakdown, 'p', ''), 'Ports — ' + r.portsOpen + ' of 10 open · ' + score.ports + ' points');
+      renderWithNums(append(breakdown, 'p', ''), 'Sync — ' + r.syncGap + ' blocks behind the network · ' + score.sync + ' points');
       renderWithNums(document.getElementById('score-fix'), scoreFix(r, score));
     }
     const trend = trendFor(r.host), changed = changesFor(r.host);
@@ -635,7 +688,15 @@
   function renderFleet() {
     const list = document.getElementById('fleet-list'); list.textContent = '';
     const reports = fleet.map(n => latestFor(n.host)).filter(Boolean);
-    const attention = fleet.filter(n => stateOf(latestFor(n.host)) !== 'SYNCED').length;
+    const attention = fleet.filter(n => fleetHealth(latestFor(n.host)) === 'attention').length;
+    const healthy = fleet.length - attention;
+    renderWithNums(document.getElementById('fleet-strip'), fleet.length + ' watched · ' + healthy + ' healthy · ' + attention + ' needs a look' + (lastCheckAll ? ' · last check-all ' + new Date(lastCheckAll).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''));
+    const filters = document.getElementById('fleet-filters'); filters.textContent = '';
+    for (const [key, label, count] of [['all', 'All', fleet.length], ['attention', 'Needs attention', attention], ['healthy', 'Healthy', healthy]]) {
+      const chip = append(filters, 'button', ''); renderWithNums(chip, label + ' ' + count);
+      chip.type = 'button'; chip.ariaPressed = String(fleetFilter === key);
+      chip.onclick = () => { fleetFilter = key; renderFleet(); };
+    }
     const verdictEl = document.getElementById('fleet-verdict');
     verdictEl.className = !fleet.length ? 'verdict-empty' : !attention ? 'verdict-ok' : 'verdict-warn';
     if (fleet.length && !attention) renderParts(verdictEl, [['All '], [String(fleet.length), 'num ok'], [fleet.length === 1 ? ' node is healthy.' : ' nodes are healthy.']]);
@@ -645,7 +706,7 @@
       append(empty, 'h2', 'Your fleet starts here');
       append(empty, 'p', 'Add your node to keep its checks together on this device. Sign in below to get started.');
     }
-    for (const node of fleet) {
+    for (const node of fleetOrder(fleet).filter(n => fleetFilter === 'all' || fleetHealth(latestFor(n.host)) === fleetFilter)) {
       const r = latestFor(node.host), state = progress.get(node.host) || stateOf(r);
       const entry = append(list, 'article', '', 'fleet-entry');
       const heading = append(entry, 'div', '', 'entry-heading'); append(heading, 'strong', node.label);
@@ -654,9 +715,12 @@
       const stats = append(entry, 'dl', '');
       const score = scoreFor(r);
       for (const [name, value] of [['BLOCK', r?.nodeLedger ?? '—'], ['BEHIND', r?.syncGap ?? '—'], ['PORTS', r?.portsOpen == null ? '—' : r.portsOpen + '/10'], ['LAST SEEN', r ? relative(r.checkedAt) : '—'], ['SCORE', score ? score.value : '—']]) {
-        const cell = append(stats, 'div', ''); append(cell, 'dt', name); append(cell, 'dd', String(value));
+        const cell = append(stats, 'div', ''); append(cell, 'dt', name); const digits = append(cell, 'dd', String(value));
+        if (name === 'SCORE' && score && staleAge(r)) digits.className = 'stale-score';
       }
       const words = [];
+      if (!r) words.push('Not checked yet');
+      const age = staleAge(r); if (age) words.push('STALE · ' + age);
       if (state === 'CHECK QUEUED') words.push(queueCopy(node.host));
       else if (state === 'CHECKING') words.push('Checking this node…');
       else if (state !== 'SYNCED') words.push(r?.portsOpen === 0 ? 'No ports answered' : r?.sections.status.line || 'Run a check to see this node’s state.');
@@ -667,6 +731,7 @@
       if (trend) words.push(trend);
       if (whatChanged) words.push(whatChanged);
       if (words.length) renderWithNums(append(entry, 'p', '', state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint'), words.join(' · '));
+      const best = bestFor(node.host); if (best) renderWithNums(append(entry, 'p', '', 'hint'), best);
       const remove = append(entry, 'button', 'Remove ' + node.label);
       remove.onclick = () => { fleet = fleet.filter(n => n.host !== node.host); persistFleet(); renderFleet(); };
     }
@@ -745,16 +810,17 @@
           }, 61000 * (queuedTimers.size + 1)));
           resultLine.textContent = 'CHECK QUEUED: ' + queueCopy(node.host);
         } else {
+          checkAllPending = null;
           progress.delete(node.host);
           const errors = { no_completed_check: 'Buy the full health check first — it is 1 Test-Pi', invalid_host: 'Enter a valid public hostname or IP address for your node.', invalid_nodeLedger: 'Enter a whole, non-negative ledger number.', horizon_unavailable: 'Pi network data is temporarily unavailable. Please try again in a moment.', invalid_horizon_response: 'Pi network data is temporarily unavailable. Please try again in a moment.', horizon_request_failed: 'Pi network data is temporarily unavailable. Please try again in a moment.' };
           resultLine.textContent = errors[value.error] || 'We could not run your check. Please try again.';
         }
         return value.error;
       }
-      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); renderReportExtras(value); persistFleet();
+      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeCheckAll(node.host); renderReportExtras(value); persistFleet();
       try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
       resultLine.textContent = value.sections.status.line;
-    } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; }
+    } catch { checkAllPending = null; progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; }
     finally { renderFleet(); }
   }
   document.getElementById('run-form').addEventListener('submit', async event => {
@@ -766,6 +832,7 @@
   });
   document.getElementById('check-all').addEventListener('click', async () => {
     const button = document.getElementById('check-all'); checkingAll = true; button.disabled = true;
+    checkAllPending = new Set(fleet.map(n => n.host));
     try {
       for (const [index, node] of fleet.slice().entries()) {
         const label = 'Checking ' + (index + 1) + ' of ' + fleet.length + ': ' + node.label;
