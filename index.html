@@ -543,6 +543,10 @@
     if ('ports' in r && !Array.isArray(r.ports)) delete clean.ports;
     if ('syncGap' in r && (!Number.isInteger(r.syncGap) || r.syncGap < 0)) clean.syncGap = null;
     if ('portsOpen' in r && (!Number.isInteger(r.portsOpen) || r.portsOpen < 0 || r.portsOpen > 10)) clean.portsOpen = null;
+    for (const key of ['networkLedger', 'nodeLedger', 'currentProtocolVersion']) {
+      if (key in r && (!Number.isInteger(r[key]) || r[key] < 0)) clean[key] = null;
+    }
+    if (clean.ports?.length === 10 && clean.portsOpen != null) clean.portsOpen = clean.ports.filter(row => row.open).length;
     if (!options.live && JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;
     return clean;
   }
@@ -559,14 +563,20 @@
   }
   let history = readStored(HISTORY_KEY, []);
   if (!Array.isArray(history)) { history = []; storageRepaired = true; }
-  const uniqueReports = new Map();
-  for (const raw of history) {
-    const r = sanitizeReport(raw); if (!r) continue;
-    const key = JSON.stringify([r.host, r.checkedAt]);
-    if (uniqueReports.has(key)) { uniqueReports.delete(key); storageRepaired = true; }
-    uniqueReports.set(key, r);
+  function upsertReport(report) {
+    const index = history.findIndex(r => r.host === report.host && r.checkedAt === report.checkedAt);
+    if (index !== -1) history.splice(index, 1);
+    history.push(report);
+    return report;
   }
-  history = [...uniqueReports.values()];
+  const storedHistory = history;
+  history = [];
+  for (const raw of storedHistory) {
+    const r = sanitizeReport(raw); if (!r) continue;
+    const length = history.length;
+    upsertReport(r);
+    if (history.length === length) storageRepaired = true;
+  }
   try {
     const saved = JSON.parse(localStorage.getItem(REPORT_KEY));
     if (saved !== null) lastReport = sanitizeReport(saved);
@@ -575,7 +585,7 @@
   if (lastReport) {
     const canonical = history.find(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt);
     if (canonical) lastReport = canonical;
-    else history.push(lastReport);
+    else lastReport = upsertReport(lastReport);
     renderCheck(lastReport);
   }
   let fleet = readStored(FLEET_KEY, []);
@@ -908,8 +918,8 @@
     const reports = fleet.map(n => latestFor(n.host));
     if (report && !document.getElementById('report').hidden) reports.push(report);
     const now = Date.now();
-    const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0 && delay <= STALE_AFTER_MS + 300000);
-    if (delays.length) freshnessTimer = setTimeout(refreshFreshness, Math.min(...delays) + 50);
+    const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0);
+    if (delays.length) freshnessTimer = setTimeout(refreshFreshness, Math.min(2147483647, Math.min(...delays) + 50));
   }
   document.addEventListener?.('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFreshness(); });
   if (typeof window !== 'undefined') window.addEventListener('focus', refreshFreshness);
@@ -975,7 +985,7 @@
       nextAttemptAt = Date.now() + 61000;
       const raw = await response.json();
       const value = response.ok ? sanitizeReport(raw, Date.parse(raw?.checkedAt) || Date.now(), { live: true }) : raw;
-      if (response.ok && !value) {
+      if (response.ok && (!value || value.host !== node.host)) {
         progress.delete(node.host);
         resultLine.textContent = 'We could not run your check. Please try again.';
         completeHost(node.host, run, resultLine.textContent);
@@ -999,7 +1009,7 @@
         }
         return value.error;
       }
-      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeHost(node.host, run); renderReportExtras(value); persistFleet();
+      progress.delete(node.host); lastReport = upsertReport(value); renderCheck(lastReport); completeHost(node.host, run); renderReportExtras(value); persistFleet();
       try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
       resultLine.textContent = value.sections.status.line;
     } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; completeHost(node.host, run, resultLine.textContent); }

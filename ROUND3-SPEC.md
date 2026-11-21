@@ -94,13 +94,23 @@ Repair what can be interpreted, drop only what cannot. The storage gate repairs
 legacy optional fields, normalizes hosts, and deduplicates saved reports and nodes
 before rendering. A checkedAt or last check-all timestamp more than five minutes
 in the future is rejected; a timestamp up to five minutes ahead is retained.
-Fresh check responses use the gate for repair only so a live check is never lost.
+An uninterpretable envelope is dropped; a malformed section or fix inside an
+interpretable envelope is repaired, and the report is retained.
 
 For a shared (host, checkedAt), the sanitized history copy is canonical and
 replaces lastReport before rendering; history is the record and lastReport is a
 view cache. Live responses use the same gate with the server checkedAt as its
 clock and `{ live: true }`: repairs never set the load-only storageRepaired flag,
 and uninterpretable responses fail without storing unsanitized data.
+
+Live acceptance trusts the responding server's own timestamp for that response.
+Stored acceptance is judged at load against the device clock with the five-minute
+allowance, because a stored future timestamp cannot be distinguished from a forged
+or corrupted one. A page left open keeps the accepted report and its stale timer;
+a reload re-judges it as stored data.
+
+A complete sanitized ports array (10 entries) governs portsOpen on disagreement.
+For a partial array, portsOpen governs the count and the array governs per-port display.
 
 ## Known tensions
 

@@ -275,8 +275,10 @@ function fleetBrowser(count = 3) {
 function fakeClock(b) {
   let now = 0;
   const timers = [];
-  b.context.Date = class extends Date { static now() { return now; } };
-  b.context.setTimeout = (callback, delay) => { timers.push({ callback, delay, at: now + delay }); return timers.length; };
+  const epoch = Date.parse('2026-11-20T12:00:00Z');
+  b.context.Date = class extends Date { static now() { return epoch + now; } };
+  b.context.setTimeout = (callback, delay) => { const timer = { callback, delay, at: now + delay }; timers.push(timer); timers.sort((a,b) => a.at-b.at); return timer; };
+  b.context.clearTimeout = timer => { const index = timers.indexOf(timer); if (index !== -1) timers.splice(index,1); };
   return { timers, async tick() {
     const timer = timers.shift(); assert.ok(timer);
     now = timer.at;
@@ -1094,4 +1096,100 @@ test('E7 gate-legal four-minute future report crosses stale at its true boundary
   assert.doesNotMatch(b.element('fleet-list').textContent,/STALE/);
   await clock.fire(id);
   assert.match(b.element('fleet-list').textContent,/STALE/);
+});
+
+test('F1 identical live replay is one identity and cannot mint best-so-far', async () => {
+  const r=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+  const b=browser({checkResponse:r});
+  await runCheck(b);await evaluate(b,'performCheck(fleet[0])');
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.doesNotMatch(b.element('fleet-list').textContent+b.element('report-best').textContent,/Best so far/);
+});
+
+test('F1 conflicting live replay replaces measurements on every surface and survives reload', async () => {
+  for (const stored of [false,true]) {
+    const early=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+    const later={...early,syncGap:100};
+    const storage=new Map(stored?[['nhr:history',JSON.stringify([early])],['nhr:lastReport',JSON.stringify(early)]]:[]);
+    const b=browser({storage,checkResponse:early});
+    if (!stored) await runCheck(b);
+    b.context.fetch=async()=>({ok:true,json:async()=>later});
+    await evaluate(b,'performCheck({host:"example.com"})');
+    for (const view of [b,browser({storage})]) {
+      assert.equal(evaluate(view,'history.length'),1);
+      assert.equal(evaluate(view,'lastReport === history[0]'),true);
+      assert.equal(evaluate(view,'lastReport.syncGap'),100);
+      assert.equal(evaluate(view,'bestFor("example.com")'),null);
+      assert.equal(evaluate(view,'scoreFor(latestFor("example.com")).value'),80);
+      assert.match(view.element('score-value').textContent,/80 of 100/);
+      assert.match(view.element('fleet-list').textContent,/80/);
+      assert.match(evaluate(view,'cardLines(lastReport).join(" ")'),/80/);
+      assert.match(evaluate(view,'proofText(lastReport)'),/Sync gap: 100/);
+    }
+  }
+});
+
+test('F2 wrong-host 200 fails the run without changing observations or report storage', async () => {
+  const b=fleetBrowser(1);
+  const prior=observed('0.example','2026-11-20T12:00:00Z',100,'ok');
+  evaluate(b,'lastReport=upsertReport('+JSON.stringify(prior)+');persistFleet();localStorage.setItem(REPORT_KEY,JSON.stringify(lastReport))');
+  const before=evaluate(b,'JSON.stringify([history,lastReport,localStorage.getItem(REPORT_KEY),localStorage.getItem(HISTORY_KEY)])');
+  b.context.fetch=async()=>({ok:true,json:async()=>observed('other.example',prior.checkedAt,0,'ok')});
+  await b.element('check-all').click();
+  assert.equal(b.element('check-result').textContent,'We could not run your check. Please try again.');
+  assert.equal(evaluate(b,'JSON.stringify([history,lastReport,localStorage.getItem(REPORT_KEY),localStorage.getItem(HISTORY_KEY)])'),before);
+  assert.equal(evaluate(b,'activeRun'),null);assert.equal(evaluate(b,'lastCheckAll'),null);
+  assert.equal(evaluate(b,'latestFor("other.example")'),undefined);
+});
+
+test('F3 live ten-minute skew schedules its true stale boundary on an idle page', async () => {
+  const now=Date.parse('2026-11-21T12:00:00Z');
+  const b=browser({checkResponse:observed('example.com',new Date(now+600000).toISOString(),0,'ok')});
+  const clock=boundaryClock(b,now);await runCheck(b);
+  const [id,timer]=[...clock.timers.entries()][0];
+  assert.equal(timer.delay,86400000+600000+50);
+  assert.doesNotMatch(b.element('fleet-list').textContent,/STALE/);
+  await clock.fire(id);assert.match(b.element('fleet-list').textContent,/STALE/);
+});
+
+test('F3 browser timer cap recomputes until the accepted boundary', async () => {
+  const now=Date.parse('2026-11-21T12:00:00Z'), b=browser(), clock=boundaryClock(b,now);
+  const r=observed('a',new Date(now+2147483647).toISOString(),0,'ok');
+  evaluate(b,'history=[sanitizeReport('+JSON.stringify(r)+','+(now+2147483647)+',{live:true})];fleet=[{host:"a",label:"A"}];renderFleet()');
+  const [id,timer]=[...clock.timers.entries()][0];assert.equal(timer.delay,2147483647);
+  await clock.fire(id);assert.equal([...clock.timers.values()][0].delay,86400000+50);
+});
+
+test('F4 status object without a line is retained, repaired and exported through load', () => {
+  const r=observed('a','2026-11-20T12:00:00Z',100,'ok');r.sections.status={};
+  const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+  assert.equal(evaluate(b,'lastReport.host'),'a');assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'JSON.stringify(lastReport.sections.status)'),JSON.stringify({level:'',line:'Unknown'}));
+  assert.equal(b.element('check-node').textContent,'Unknown');
+  assert.match(evaluate(b,'proofText(lastReport)'),/Unknown/);
+  assert.doesNotMatch(evaluate(b,'proofText(lastReport)'),/undefined/);
+});
+
+test('F6 display scalars repair to null and render unknown or absent', () => {
+  for (const field of ['networkLedger','nodeLedger','currentProtocolVersion']) for (const value of [-1,1.5,'corrupt',{},null]) {
+    const r={...observed('a','2026-11-20T12:00:00Z',0,'ok'),[field]:value};
+    const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
+    assert.equal(evaluate(b,'lastReport.'+field),null);
+    assert.equal(evaluate(b,'storageRepaired'),value!==null);
+    assert.doesNotMatch(b.element('fleet-list').textContent+b.element('network-observation').textContent+evaluate(b,'proofText(lastReport)'),/corrupt|\[object Object\]/);
+    if(field==='currentProtocolVersion') assert.equal(b.element('network-note').hidden,true);
+  }
+});
+
+test('F6 complete ports govern count while partial arrays retain the standing split', () => {
+  const ports=Array.from({length:10},(_,i)=>({port:31400+i,open:i<3}));
+  for (const complete of [true,false]) {
+    const r={...observed('a','2026-11-20T12:00:00Z',0,'ok'),ports:complete?ports:ports.slice(0,3),portsOpen:10};
+    const b=browser();
+    evaluate(b,'storageRepaired=false;lastReport=sanitizeReport('+JSON.stringify(r)+')');
+    assert.equal(evaluate(b,'lastReport.portsOpen'),complete?3:10);
+    assert.equal(evaluate(b,'storageRepaired'),complete);
+  }
 });
