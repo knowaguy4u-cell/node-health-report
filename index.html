@@ -19,8 +19,8 @@
   }
   header, .entry-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   header {
-    padding: .25rem 0 1.25rem;
-    margin: 0 0 1.75rem;
+    padding: .25rem 0 1.1rem;
+    margin: 0 0 1.5rem;
     border-bottom: 1px solid rgba(148,163,184,.22);
   }
   header strong {
@@ -90,10 +90,10 @@
   }
   #network-observation .obs-val { color: #e6edf7; letter-spacing: .04em; }
   #fleet-verdict + .hint { margin: 0; max-width: 56ch; font-size: .95rem; line-height: 1.55; }
-  #fleet-list { margin: 1.6rem 0; }
+  #fleet-list { margin: 1.45rem 0; }
   .fleet-entry {
-    padding: 1.35rem 1.25rem;
-    margin: .85rem 0;
+    padding: 1.25rem 1.2rem;
+    margin: .75rem 0;
     background: rgba(6,11,24,.55);
     border: 1px solid rgba(148,163,184,.20);
     border-top-color: rgba(148,163,184,.28);
@@ -526,7 +526,7 @@
     const attention = fleet.filter(n => stateOf(latestFor(n.host)) !== 'SYNCED').length;
     const verdictEl = document.getElementById('fleet-verdict');
     verdictEl.className = !fleet.length ? 'verdict-empty' : !attention ? 'verdict-ok' : 'verdict-warn';
-    if (fleet.length && !attention) renderParts(verdictEl, [['All '], [String(fleet.length), 'num ok'], [' nodes are healthy.']]);
+    if (fleet.length && !attention) renderParts(verdictEl, [['All '], [String(fleet.length), 'num ok'], [fleet.length === 1 ? ' node is healthy.' : ' nodes are healthy.']]);
     else renderParts(verdictEl, [[String(fleet.length), 'num'], [fleet.length === 1 ? ' node watched. ' : ' nodes watched. '], [String(attention), attention ? 'num warn' : 'num'], [attention === 1 ? ' needs attention.' : ' need attention.']]);
     if (!fleet.length) {
       const empty = append(list, 'div', '', 'empty-state');

@@ -238,7 +238,7 @@ test('fleet history stores real checks without credentials and migrates old repo
   const storage = new Map([['nhr:lastReport', JSON.stringify(report)]]);
   const b = browser({ storage, checkResponse: report });
   assert.equal(JSON.parse(storage.get('nhr:history')).length, 1);
-  assert.equal(b.element('fleet-verdict').textContent, 'All 1 nodes are healthy.');
+  assert.equal(b.element('fleet-verdict').textContent, 'All 1 node is healthy.');
   await b.element('signin').click(); await runCheck(b);
   assert.doesNotMatch(storage.get('nhr:history') + storage.get('nhr:fleet'), /fixture-access-token/);
   assert.match(b.element('network-observation').textContent, /NETWORK LEDGER 1000 · PROTOCOL 24/);
