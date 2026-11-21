@@ -1,12 +1,13 @@
 'use strict';
 
 const { HttpError, requireString } = require('./errors');
+const { networkConfig } = require('./config');
 const PRICE = 1;
 const PAYOUT = 0.5;
 const PRODUCT = 'full_health_check';
 const PAYOUT_PRODUCT = 'test_payout';
 
-function createPayments({ pi, store, ledger }) {
+function createPayments({ pi, store, ledger, network = networkConfig().name }) {
   async function identify(token) {
     if (!token) throw new HttpError(401, 'missing_access_token');
     const user = await pi.getMe(token);
@@ -16,7 +17,7 @@ function createPayments({ pi, store, ledger }) {
   function validate(payment, id, user, direction, amount, product) {
     if (!payment || payment.identifier !== id) throw new HttpError(502, 'invalid_pi_response');
     if (payment.direction !== direction) throw new HttpError(400, 'wrong_direction');
-    if (payment.network !== 'Pi Testnet') throw new HttpError(400, 'wrong_network');
+    if (payment.network !== network) throw new HttpError(400, 'wrong_network');
     if (payment.amount !== amount) throw new HttpError(400, 'wrong_amount');
     if (payment.metadata?.product !== product) throw new HttpError(400, 'wrong_product');
     if (payment.user_uid !== user.uid) throw new HttpError(403, 'payment_owner_mismatch');

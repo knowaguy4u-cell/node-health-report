@@ -1,11 +1,11 @@
 'use strict';
 
 const { HttpError } = require('./errors');
-// Confirmed against pi-apps/pi-nodejs .env.production and src/index.ts.
-const HORIZON = 'https://api.testnet.minepi.com';
-const NETWORK = 'Pi Testnet';
+const { networkConfig } = require('./config');
+const { horizon: HORIZON, name: NETWORK } = networkConfig();
 
 function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.env } = {}) {
+  const { horizon: HORIZON, name: NETWORK } = networkConfig(env);
   async function request(path, options = {}) {
     try {
       return await fetchImpl(`${HORIZON}${path}`, { ...options, signal: AbortSignal.timeout(15000) });

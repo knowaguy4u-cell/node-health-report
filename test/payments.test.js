@@ -8,6 +8,7 @@ const { createLedger, HORIZON } = require('../api/_lib/stellar');
 const { MemoryStore } = require('../api/_lib/store');
 const { handler } = require('../api/_lib/http');
 const { HttpError } = require('../api/_lib/errors');
+const { networkConfig } = require('../api/_lib/config');
 
 // Synthetic fixture identities only. No real access token, API key, or seed is used.
 const user = () => ({ uid: 'fixture-user', wallet_address: 'fixture-wallet', credentials: { scopes: ['wallet_address'] } });
@@ -98,6 +99,39 @@ function fixture(overrides = {}) {
 const approval = { paymentId: 'fixture-payment', accessToken: 'fixture-access-token' };
 const completion = { ...approval, txid: 'fixture-tx' };
 const payout = { accessToken: 'fixture-access-token', amount: 100, uid: 'attacker', wallet_address: 'attacker' };
+
+test('networkConfig defaults to frozen Testnet configuration', () => {
+  const config = networkConfig({});
+  assert.deepEqual(config, { name: 'Pi Testnet', horizon: 'https://api.testnet.minepi.com' });
+  assert.equal(Object.isFrozen(config), true);
+});
+
+test('networkConfig derives Mainnet Horizon and honors an explicit URL', () => {
+  assert.deepEqual(networkConfig({ PI_NETWORK_NAME: 'Pi Mainnet' }), {
+    name: 'Pi Mainnet', horizon: 'https://api.minepi.com',
+  });
+  assert.deepEqual(networkConfig({ PI_NETWORK_NAME: 'Pi Mainnet', PI_HORIZON_URL: 'https://horizon.example' }), {
+    name: 'Pi Mainnet', horizon: 'https://horizon.example',
+  });
+});
+
+test('networkConfig rejects an unknown network', () => {
+  assert.throws(() => networkConfig({ PI_NETWORK_NAME: 'unknown' }), { code: 'server_not_configured', status: 503 });
+});
+
+test('approve accepts Mainnet payments with an injected Mainnet network', async () => {
+  const f = fixture({ network: 'Pi Mainnet' });
+  const service = createPayments({ pi: f.pi, ledger: f.ledger, store: f.store, network: 'Pi Mainnet' });
+  assert.deepEqual(await service.approve(approval), { ok: true, status: 'approved' });
+  assert.equal(f.counts().approveCalls, 1);
+});
+
+test('approve rejects Testnet payments with an injected Mainnet network', async () => {
+  const f = fixture();
+  const service = createPayments({ pi: f.pi, ledger: f.ledger, store: f.store, network: 'Pi Mainnet' });
+  await assert.rejects(service.approve(approval), { code: 'wrong_network', status: 400 });
+  assert.equal(f.counts().approveCalls, 0);
+});
 
 test('approve rejects wrong amount before approval', async () => {
   const f = fixture({ amount: 2 });
@@ -582,6 +616,23 @@ test('payout creates normally when a chain candidate fails validation', async ()
   assert.equal((await f.service().payout(payout)).status, 'completed');
   assert.equal(f.counts().createCalls, 1);
   assert.equal(f.counts().submitCalls, 1);
+});
+
+test('ledger history uses Mainnet Horizon when configured', async () => {
+  const { Keypair } = require('@stellar/stellar-sdk');
+  const signer = Keypair.random();
+  const requests = [];
+  const ledger = createLedger({
+    env: { PI_NETWORK_NAME: 'Pi Mainnet', PI_WALLET_SEED: signer.secret() },
+    fetchImpl: async url => {
+      requests.push(url);
+      return json({ _embedded: { records: [] } });
+    },
+  });
+  assert.deepEqual(await ledger.findPaymentsTo('fixture-wallet', '0.5'), []);
+  assert.deepEqual(requests, [
+    `https://api.minepi.com/accounts/${signer.publicKey()}/operations?order=desc&limit=200`,
+  ]);
 });
 
 test('ledger history pages at most three times and filters native outgoing payments', async () => {
