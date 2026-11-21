@@ -458,3 +458,51 @@ test('queue presentation retains observed stats and explains the real wait', asy
   const note = entry.children.find(child => child.className === 'hint queue-note');
   assert.match(note.textContent, /Queue position 1 — about 1 minute. Keep this page open./);
 });
+
+test('verdict hero reflects empty, healthy, and attention states with monospace numerals', () => {
+  const empty = browser();
+  assert.equal(empty.element('fleet-verdict').className, 'verdict-empty');
+  assert.deepEqual(empty.element('fleet-verdict').children.filter(c => c.className).map(c => [c.textContent, c.className]), [['0', 'num'], ['0', 'num']]);
+
+  const healthy = observed('ok.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const okBrowser = browser({ storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: healthy.host, label: 'OK' }])],
+    ['nhr:history', JSON.stringify([healthy])],
+  ]) });
+  assert.equal(okBrowser.element('fleet-verdict').className, 'verdict-ok');
+  assert.deepEqual(okBrowser.element('fleet-verdict').children.filter(c => c.className).map(c => [c.textContent, c.className]), [['1', 'num ok']]);
+
+  const warn = observed('warn.example', '2026-11-20T12:00:00Z', 25, 'warn');
+  const warnBrowser = browser({ storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: warn.host, label: 'Warn' }])],
+    ['nhr:history', JSON.stringify([warn])],
+  ]) });
+  assert.equal(warnBrowser.element('fleet-verdict').className, 'verdict-warn');
+  assert.deepEqual(warnBrowser.element('fleet-verdict').children.filter(c => c.className).map(c => [c.textContent, c.className]), [['1', 'num'], ['1', 'num warn']]);
+});
+
+test('telemetry line, observation date, network note, and dynamic amounts isolate monospace numbers', async () => {
+  const report = observed('ok.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: report.host, label: 'OK' }])],
+    ['nhr:history', JSON.stringify([report])],
+  ]) });
+  assert.deepEqual(b.element('network-observation').children.filter(c => c.className === 'obs-val').map(c => c.textContent), ['1000', '24']);
+  assert.equal(b.element('observation-date').children.at(-1).className, 'num');
+  assert.deepEqual(b.element('network-note').children.filter(c => c.className === 'num').map(c => c.textContent), ['24']);
+  await b.element('signin').click();
+  assert.deepEqual(b.element('health-check').children.filter(c => c.className === 'num').map(c => c.textContent), ['1']);
+  assert.equal(b.element('health-check').textContent, 'Run full health check — 1 Test-Pi');
+  await b.element('payout').click();
+  assert.deepEqual(b.element('payout').children.filter(c => c.className === 'num').map(c => c.textContent), ['0.5']);
+  assert.equal(b.element('payout').textContent, 'Send test payout — 0.5 Test-Pi');
+});
+
+test('reskin locks single amber fixes highlight, amber test badge, and typography rules', () => {
+  const style = html.match(/<style>([\s\S]*?)<\/style>/)[1];
+  assert.equal((style.match(/linear-gradient/g) || []).length, 1);
+  assert.match(style, /#fixes-panel\s*\{[^}]*linear-gradient\([^)]*245,\s*158,\s*11/);
+  assert.match(style, /\.badge\s*\{[^}]*color:\s*#f59e0b;[^}]*background:\s*rgba\(245,\s*158,\s*11/);
+  assert.match(style, /body\s*\{[^}]*"Times New Roman"/);
+  assert.match(style, /\.mono,\s*\.num,\s*dd,\s*input\[type=number\]\s*\{[^}]*ui-monospace/);
+});
