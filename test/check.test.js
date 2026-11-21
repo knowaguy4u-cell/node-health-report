@@ -76,7 +76,7 @@ function fixture() {
     network: 'Pi Testnet', metadata: { product: 'full_health_check' }, user_uid: 'user', from_address: 'wallet',
     status: { developer_completed: true, transaction_verified: true }, transaction: { verified: true, txid: 'tx' } };
   let user = { uid: 'user', wallet_address: 'wallet' }, probes = 0;
-  const ledger = { findPaymentsFrom: async () => [{ memo: 'purchase', txid: 'tx' }], latestLedger: async () => ({ sequence: 100, protocolVersion: 23 }) };
+  const ledger = { currentProtocolVersion: async () => 24, findPaymentsFrom: async () => [{ memo: 'purchase', txid: 'tx' }], latestLedger: async () => ({ sequence: 100, protocolVersion: 23 }) };
   const pi = { getMe: async () => user, getPayment: async () => purchase };
   const check = createCheck({ pi, ledger, store, probe: async (host, list, timeout) => {
     probes++;
@@ -98,6 +98,7 @@ test('check identifies before probing and denies missing entitlement', async () 
 test('entitled check returns report and rate limits repeat calls', async () => {
   const f = fixture();
   const report = await f.check(request);
+  assert.equal(report.currentProtocolVersion, 24);
   assert.equal(report.networkLedger, 100);
   assert.deepEqual(report.ports, ports(true));
   assert.equal(report.syncGap, 1);
@@ -124,6 +125,7 @@ test('check uses the store index when the wallet has no chain candidates', async
   await f.store.set('user-payment:user', 'purchase');
   const report = await f.check(request);
   assert.equal(report.portsOpen, 10);
+  assert.equal(report.currentProtocolVersion, 24);
   assert.equal(report.networkLedger, 100);
   assert.equal(f.probes(), 1);
 });
@@ -271,4 +273,24 @@ test('latestLedger reads configured Horizon and sanitizes failures', async () =>
   } });
   assert.deepEqual(await ledger.latestLedger(), { sequence: 123, protocolVersion: 23 });
   await assert.rejects(createLedger({ fetchImpl: async () => { throw new Error('private'); } }).latestLedger(), { status: 502, code: 'horizon_unavailable' });
+});
+
+ test('current protocol comes from Horizon root and rejects invalid data', async () => {
+   const ledger = createLedger({ env: { PI_HORIZON_URL: 'https://fixture.invalid' }, fetchImpl: async url => {
+     assert.equal(url, 'https://fixture.invalid/');
+     return json({ current_protocol_version: 24, supported_protocol_version: 25 });
+   } });
+   assert.equal(await ledger.currentProtocolVersion(), 24);
+   for (const value of [null, '24', -1, 1.5]) {
+     await assert.rejects(createLedger({ fetchImpl: async () => json({ current_protocol_version: value }) }).currentProtocolVersion(), { code: 'invalid_horizon_response' });
+   }
+ });
+
+test('check succeeds with null protocol when the Horizon root read fails', async () => {
+  const f = fixture();
+  f.ledger.currentProtocolVersion = async () => { throw new HttpError(502, 'horizon_unavailable'); };
+  const report = await f.check(request);
+  assert.equal(report.currentProtocolVersion, null);
+  assert.equal(report.networkLedger, 100);
+  assert.equal(report.sections.status.level, 'ok');
 });
