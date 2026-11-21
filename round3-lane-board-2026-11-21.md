@@ -2413,3 +2413,400 @@ I attacked the fix-2 build (`index.html` + `test/frontend.test.js` + `api/_lib/c
 ## Convergence bar, restated for cycle 4
 
 Cycle 4 reviews the fix-pass-3 build against R1′, R2, R3, R4″, R5, R6′, R7′, R8″, R9–R14, R15, R16. Convergence requires: every available lane AGREEs on every ruling (a lane that cannot run is recorded, not counted); no NEW reproducible material defect; suite green on Nova's run. Gemini's ship recommendation is noted with respect and not adopted this cycle — the reproduced defects govern.
+
+---
+
+# CYCLE 4 — fix pass 3 build, Nova verification, amended rulings, brief
+
+## Codex's fix-pass-3 build report (verbatim, delivered)
+
+Implemented all six items:
+
+- **F1:** Shared canonical upsert for load and live success; replay and reload consistency tests.
+- **F2:** Wrong-host live responses fail without changing stored observations.
+- **F3:** Freshness scheduling removes the acceptance-window upper filter and uses the browser timer cap; boundary and recomputation tests.
+- **F4:** Retention-with-repair pinning test and corrected documentation; no behavior change.
+- **F5:** Documented the deliberate live-versus-reload clock policy.
+- **F6:** Invalid display scalars become null; complete port arrays govern counts; partial-array semantics remain intact.
+
+`npm test`: **225 passed, 1 skipped, 0 failed**.  
+`git diff --check`: passed.
+
+`api/` untouched. Amounts remain 1 / 0.5. Pi.init and API_BASE remain byte-identical. Nothing could not be implemented as written.
+## Nova's verification of fix pass 3
+
+- Suite on Nova's run: **226/226 pass, 0 fail, 0 skipped** (218 + 8 new F-tests).
+- All 27 fix-pass-1 verification probes re-run against the new build: **27 passed, 0 failed** — no regressions.
+- Implementation read at the live path: one upsertReport (index.html:566) used by load (:577, :588) and live success (:1012); host binding at :988 (response.ok && (!value || value.host !== node.host) → failed check, nothing stored); scheduler upper filter removed with a browser-cap recompute (F3 tests at frontend.test.js:1147, :1157).
+- Commit **0b3c827** on round3-build, pushed. api/ untouched; amounts 1 / 0.5; Pi.init + API_BASE byte-identical; git diff --check clean.
+
+**Tested build for cycle 4 (verify before you certify):**
+- index.html SHA-256: 1915b54f0a8688befe6f21f3fc7b5c57c8ba9fd116a1f214a31ebb6772f1d45d
+- test/frontend.test.js SHA-256: 5614de60f280ce28cae747a1f11b8c2d3d1855e7da7628ee14bb5bec010b4953
+
+## Rulings under verdict in cycle 4
+
+R1′, R2, R3, R5, R6′, R7′, R9–R14 stand as agreed. Amended/new this cycle:
+- **R4″** — an uninterpretable ENVELOPE (no host, no sections object, unparseable or out-of-window checkedAt) is dropped at load; a malformed section or fix inside an interpretable envelope is repaired per R1′ and the report retained.
+- **R8″** — freshness scheduling covers EVERY accepted report's boundary, stored or live, with no acceptance-window upper filter (browser-cap recompute only).
+- **R15** — one canonical upsert governs (host, checkedAt) identity on load and live success; last arrival wins a conflict; best-so-far counts distinct checks only.
+- **R16** — a live response is accepted only for the host that was requested; a mismatch fails the check and stores nothing.
+- **F5 policy (pinned in ROUND3-SPEC.md):** live acceptance trusts the server's timestamp for that response; stored acceptance is judged at load against the device clock with the five-minute allowance. Contest the policy only with a rule that keeps the anti-forgery property.
+- **F6 (in R1′'s scope):** display scalars that are not non-negative integers become null at the gate; a complete 10-entry ports array governs portsOpen; a partial array keeps the standing split.
+
+## The cycle-4 brief (identical for every lane)
+
+1. **Verdict table** over R4″, R8″, R15, R16 (and R1′ as amended by F6): AGREE or DISAGREE, with file/line evidence and a reproduction for every defect claim.
+2. **Attack the fix-3 build** against the canonical contract — one shape, one copy per check, one acceptance policy on every path, and now: one identity resolution and one host binding. If you cannot break it, say what you tried.
+3. **One level deeper:** the weakest remaining point a world-class reviewer would still catch, ranked defect / weakness / taste, with what 'fixed' looks like.
+4. **Professional standard:** one miss and one hit in another lane's cycle-3 work (or Nova's), by name.
+
+Convergence bar: every available lane AGREEs on every ruling; no NEW reproducible material defect; suite green. Improvement ideas park as named candidates and do not block.
+
+---
+
+# CYCLE 4 — Codex's first run (cut short; finding verified by Nova)
+
+Codex's cycle-4 run ended after three progress messages (the session stopped mid-review; a continuation run has been tasked with the full four-part answer). Its one completed finding, verbatim from its final message:
+
+> I reproduced an identity defect: the gate accepts `checkedAt: ["2026-11-20T12:00:00Z"]`, but upsert compares arrays by reference. Two responses for that same timestamp produce two history entries and a “Best so far” line; reload adds a third copy from `lastReport`. The suite passes locally with 225 passed and one skipped, so its current identity tests miss this case.
+
+**Nova's verification (same hour): CONFIRMED in full.** Probe against the live build: sanitizeReport accepts the array checkedAt (Date.parse coerces the single-element array to its string) and the array survives into the stored copy; two identical accepts produce 2 history entries; bestFor returns 'Best so far: 100 · 20 Nov' from ONE distinct check. Root cause: the gate type-checks host (typeof string) but not checkedAt — the identity key's other half. This is a material defect against R15 and becomes fix pass 4, item G1: checkedAt must be a string at the gate, with regression tests for the live-duplicate and reload paths.
+
+## Cycle 4 — Freebuff: lane unavailable (record)
+
+Freebuff's cycle-4 attempt ended inside its own platform: its TUI reported its configured model unavailable in a self-referential loop ('MiMo v2.6 Flash Fast is no longer available in Freebuff. We recommend using MiMo v2.6 Flash Fast instead.') and an error box ('Freebuff did not send this message to the model…'). No task content was reached. Combined with cycle 3's two session-start failures, the lane is down at the platform level, not blocked on policy. Nova is not retrying it this cycle; its folder holds the full current code and board for whenever the lane is reachable.
+
+---
+
+# CYCLE 4 — ChatGPT's response (verbatim, CYCLE4-RESPONSE-GPT.md)
+
+# Cycle 4 — ChatGPT review of fix pass 3
+
+## Review basis and hash verification
+
+I verified the staged hashes against the board:
+
+- `index.html`: `1915b54f0a8688befe6f21f3fc7b5c57c8ba9fd116a1f214a31ebb6772f1d45d` — match.
+- `test/frontend.test.js`: `5614de60f280ce28cae747a1f11b8c2d3d1855e7da7628ee14bb5bec010b4953` — match.
+- `ROUND3-SPEC.md`: `f65b8588220ee8ba4282bb622a936b4fc23408b0cc9d0433ecfdac492a5f727f` — staged and read.
+- `ROUND3-FIX3-SPEC.md`: `b57d9d930eee56e144579cf84a6bd25828e7c88d1e29eb90249ba8662f7861b6` — staged and read.
+
+The code findings below are from the hash-matching `index.html`. Nova reports 226/226 tests and 27/27 probes; I accept those as reported verification evidence and did not rerun them.
+
+## 1. Verdict table
+
+| Ruling | Verdict | File/line evidence |
+|---|---|---|
+| **R1′, as amended by F6** | **AGREE.** | `sanitizeReport` validates and repairs sections/fixes and separates the live flag (`index.html:524–551`). F6’s scalar checks set invalid `networkLedger`, `nodeLedger`, and `currentProtocolVersion` to `null` (`:546–548`). A complete sanitized ten-port array governs `portsOpen` on mismatch (`:549`); partial arrays leave the two views separate as specified. The live caller passes `{ live: true }` (`:987`), so sanitization does not mark storage repaired. |
+| **R4″ — drop uninterpretable envelopes; repair malformed sections/fixes** | **AGREE.** | Envelope rejection checks host, sections object, parseable checkedAt, and the future window (`index.html:526`). Within an accepted envelope, malformed status/sync/ports sections become `{ level: '', line: 'Unknown' }` and invalid levels are cleared (`:529–533`); fixes are repaired (`:528`). `lastReport` is sanitized before reconciliation/render (`:580–590`). This is the explicit envelope-versus-section split in F4. |
+| **R8″ — schedule every accepted report boundary** | **AGREE.** | Scheduling collects latest reports for the entire fleet (`index.html:918`), retains every nonnegative delay (`:921`), and caps the timer at the browser maximum while recomputing after it fires (`:922`). The prior acceptance-window upper filter is gone. |
+| **R15 — canonical upsert on load and live success** | **DISAGREE — a reproducible stored-data identity edge remains.** | `upsertReport` keys on exact `(host, checkedAt)` strings (`index.html:566–570`); `sanitizeReport` only checks that `Date.parse(checkedAt)` is finite and leaves the original timestamp spelling unchanged (`:526–527`). Therefore two strings for the same instant remain two identities. Reproduction: put two otherwise valid history records for `a.example` at `2026-11-20T12:00:00Z` and `2026-11-20T06:00:00-06:00`. Both parse to the same instant, but `upsertReport` does not collide them; `bestFor` can count them as two observations (`:611–617`). This violates “one distinct check” if identity means the actual timestamp instant. Canonicalize accepted timestamps to ISO UTC before keying, or explicitly constrain the schema to canonical UTC ISO strings and reject/repair other spellings. |
+| **R16 — bind live response to requested host** | **AGREE.** | After sanitization, `performCheck` rejects a missing report or one whose normalized `value.host` differs from `node.host` (`index.html:987–993`). The failure path calls `completeHost` and returns before the success mutation. The history upsert and `REPORT_KEY` write occur only later (`:1012–1014`), so a mismatched response is not stored as a successful check. |
+
+## 2. Attack on the fix-3 build
+
+I attacked report identity at both the live boundary and stored-load boundary, and checked the amended cases for status repair, timestamp policy, retry ownership, and freshness scheduling.
+
+**Live host binding holds:** a valid HTTP 200 for `b.example` returned to a request for `a.example` fails the equality check at `index.html:988`; the function returns before `upsertReport`, `lastReport` assignment, or `REPORT_KEY` write (`:989–993`, `:1012–1014`).
+
+**Live duplicate upsert holds:** success calls `upsertReport(value)` (`:1012`), and that operation removes an existing exact-key record before pushing the latest arrival (`:566–570`). Thus an in-session exact-key replay does not create two entries.
+
+**Stored equivalent-instant keys do not hold:** the timestamp parser accepts both ISO spellings in the R15 row, but `upsertReport` compares raw strings. This is a concrete localStorage fixture that leaves two records for one instant and permits `bestFor` to meet its two-observation threshold from one distinct check. It is a reproducible canonical-identity defect, although it requires a noncanonical stored timestamp spelling; ordinary backend responses use server-minted ISO timestamps.
+
+For the amended rulings, the inspected code matches R4″, R8″, and R16. R1′/F6’s stated repairs and count rules are implemented. I found no remaining version of the earlier wrong-host acceptance, filtered-fleet freshness omission, or retry waiter/abort defects in the named paths. I did not rerun the 226-test suite; that count remains Nova’s reported evidence.
+
+## 3. One level deeper
+
+**Rank: weakness, with a narrow reproducible contract failure — timestamp identity is syntactic, not canonical.** The upsert now gives load and live success one operation, but the key is still based on the source string. Two accepted representations of the same instant can therefore coexist and be counted separately. That undercuts R15’s distinct-check guarantee at the storage boundary.
+
+**Fixed looks like:** validate the timestamp, convert it once to a canonical UTC ISO representation (or reject noncanonical forms), and use that normalized value for the report object, identity key, exports, and persistence. Add a test with two offset spellings of the same instant and assert one observation, one best-score candidate, and stable results after reload.
+
+## 4. Professional standard — Cycle 3
+
+- **Miss — Gemini, Cycle 3 R8″ review:** Gemini agreed that the five-minute scheduler bound covered the accepted domain, while its own sub-observation discussed a live report accepted with ten minutes of server/client skew. That accepted case has a boundary beyond the five-minute allowance and was the gap Codex reproduced. The cycle-3 board records this as a miss in applying the stated bound to every accepted path.
+- **Hit — Gemini, Cycle 3 F6 finding:** Gemini traced inconsistent `portsOpen` versus per-port arrays and unchecked display scalars to concrete output differences, then proposed gate-level reconciliation. The board adopted it as F6; the current gate applies those scalar and complete-array rules at `index.html:546–550`. That was a useful cross-surface invariant, not just a field-level cleanup.
+
+## Convergence call
+
+I agree with R1′/F6, R4″, R8″, and R16. I disagree with R15 as a fully closed canonical-identity rule because accepted timestamp spellings can represent the same instant under different keys. The 226/226 suite and 27/27 probes are reported green, but the timestamp-alias fixture is not among the evidence I reviewed. On this review, the convergence bar is **not yet met** until the timestamp identity policy is canonicalized or explicitly narrowed and pinned.
+
+**Nova's verification of GPT's R15 finding: CONFIRMED.** Probe against the live build: two records for one instant under two spellings ('2026-11-20T12:00:00Z' and '2026-11-20T06:00:00-06:00') both pass the gate, key separately in upsertReport, and bestFor returns 'Best so far: 100 · 20 Nov' from ONE distinct check. Same root as Codex's array finding: the gate neither type-enforces nor canonicalizes checkedAt. One fix closes both — fix pass 4, item G1: checkedAt must be a string at the gate and is rewritten to canonical UTC ISO (toISOString form) before any keying, sorting, or storage; backend-minted timestamps are already in that form and pass byte-identical.
+
+---
+
+# CYCLE 4 — Gemini's response (verbatim, CYCLE4-RESPONSE-GEMINI.md)
+
+# Gemini — Cycle 4 Convergence Review (2026-11-21)
+
+**Lane:** Gemini  
+**Target Build:** Fix-pass-3 build at commit `0b3c827`  
+- `index.html` SHA-256: `1915b54f0a8688befe6f21f3fc7b5c57c8ba9fd116a1f214a31ebb6772f1d45d` (verified match, 1196 lines)  
+- `test/frontend.test.js` SHA-256: `5614de60f280ce28cae747a1f11b8c2d3d1855e7da7628ee14bb5bec010b4953` (verified match, 1195 lines, 95/95 frontend tests passing locally; 226/226 full suite + 27/27 probes on Nova's run)  
+- `ROUND3-SPEC.md` SHA-256: `f65b8588220ee8ba4282bb622a936b4fc23408b0cc9d0433ecfdac492a5f727f` (119 lines)  
+- `ROUND3-FIX3-SPEC.md` SHA-256: `b57d9d930eee56e144579cf84a6bd25828e7c88d1e29eb90249ba8662f7861b6` (60 lines)  
+**Board Reference:** `round3-lane-board-2026-11-21.md` (Reconciliation #6 and Cycle 4 brief, lines 2394–2464)  
+**Mode:** Review only — no edits to `index.html` or tests.
+
+---
+
+## 0. Acknowledgment of Nova Reconciliation #6
+
+Nova's Reconciliation #6 (`round3-lane-board-2026-11-21.md:2394–2415`) is right on both points regarding my Cycle 3 response:
+1. **Frontend invariant vs. backend plausibility (Probe B / F1):** My Cycle 3 note that the backend's 60-second rate limit made identical live `(host, checkedAt)` timestamps implausible relied on backend behavior to excuse a missing frontend invariant (`history.push(value)` at live ingress vs. deduplicated map at load). Codex and ChatGPT held the canonical contract to its strict frontend boundary.
+2. **Policy agreement vs. build certification (`R8'` / Probe C / F3):** In Cycle 3, I verified that `E6` accepted a 10-minute server-skewed live response (`test/frontend.test.js:1070`) and that `E7` extended `scheduleFreshness` to `STALE_AFTER_MS + 300000` (`index.html:911`), yet I marked `R8'` `AGREE` without intersecting those two bounds (`+10m` live response escaping the `+5m` scheduler filter). Applying Codex's standard — *any gap between a ruling's stated guarantee and an accepted input's actual execution is a `DISAGREE` until closed* — I have audited `R4″`, `R8″`, `R15`, `R16`, `R1′ (with F6)`, `F5`, and all standing rulings below against that exact bar.
+
+---
+
+## 1. Verdict Table Over Cycle 4 Rulings (`R4″`, `R8″`, `R15`, `R16`, `R1′` as amended by `F6`, `F5` policy, and Standing `R2, R3, R5, R6′, R7′, R9–R14`)
+
+| Ruling | Verdict | File / Line Evidence & Verification |
+| :---: | :---: | :--- |
+| **R1′ (as amended by F6)** — Gate validates sections/fixes/ports, suppresses `storageRepaired` on live ingress, nulls non-integer/negative display scalars (`networkLedger`, `nodeLedger`, `currentProtocolVersion`), and reconciles `portsOpen` to `clean.ports` open count when `clean.ports.length === 10` while keeping the standing split for partial arrays | **AGREE** | Implemented in `sanitizeReport` (`index.html:524–552`):<br>• Lines 546–548: `for (const key of ['networkLedger', 'nodeLedger', 'currentProtocolVersion']) { if (key in r && (!Number.isInteger(r[key]) || r[key] < 0)) clean[key] = null; }`<br>• Line 549: `if (clean.ports?.length === 10 && clean.portsOpen != null) clean.portsOpen = clean.ports.filter(row => row.open).length;`<br>• Line 550: `if (!options.live && JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;`<br>• Tested in `test/frontend.test.js:1175–1195` (`F6 display scalars repair to null...` and `F6 complete ports govern count while partial arrays retain the standing split`). |
+| **R4″** — Uninterpretable *envelope* (no host, no `sections` object, unparseable or out-of-window `checkedAt`) is dropped at load; a malformed section or fix inside an interpretable envelope is repaired per `R1′` and retained | **AGREE** | Implemented at `index.html:526` (envelope rejection returns `drop()` → `null`) and `index.html:528–533` (malformed `status`/`sync`/`ports` inside a valid `sections` object repaired to `{ level: '', line: 'Unknown' }`; malformed `fixes` repaired to valid entries). Load path (`index.html:581–590`) drops `null` envelopes and retains repaired reports. Tested at `test/frontend.test.js:813–817`, `989–1015` (`E1`), and `1165–1173` (`F4 status object without a line is retained, repaired and exported through load`). Documented in `ROUND3-SPEC.md:97–98`. |
+| **R8″** — Freshness scheduling covers *every* accepted report's boundary, stored or live, with no acceptance-window upper filter (browser-cap `2147483647` recompute only) | **AGREE** | Implemented in `scheduleFreshness` (`index.html:914–923`):<br>• Line 921: `const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0);`<br>• Line 922: `if (delays.length) freshnessTimer = setTimeout(refreshFreshness, Math.min(2147483647, Math.min(...delays) + 50));`<br>No upper filter remains; any nonnegative delay up to `2^31 - 1` ms schedules directly, and larger delays cap at `2147483647` and reschedule when `refreshFreshness` fires. Tested at `test/frontend.test.js:1147–1163` (`F3 live ten-minute skew...` and `F3 browser timer cap recomputes...`). |
+| **R15** — One canonical `upsertReport` governs `(host, checkedAt)` identity on load and live success; last arrival wins a conflict; `bestFor` counts distinct checks only | **AGREE** | Implemented via `upsertReport(report)` (`index.html:566–571`): finds existing `(r.host === report.host && r.checkedAt === report.checkedAt)`, splices it out if present, pushes `report`, and returns `report`. Used at load (`index.html:577, 588`) and at live success (`index.html:1012`: `lastReport = upsertReport(value);`). Tested for identical replay, conflicting replay (in-memory and stored), and post-reload consistency at `test/frontend.test.js:1101–1132` (`F1`). |
+| **R16** — Live response is accepted only for the host that was requested (`value.host === node.host`); a mismatch fails the check and stores nothing | **AGREE** | Implemented in `performCheck` (`index.html:987–993`):<br>`const value = response.ok ? sanitizeReport(raw, Date.parse(raw?.checkedAt) || Date.now(), { live: true }) : raw;`<br>`if (response.ok && (!value || value.host !== node.host)) { progress.delete(node.host); resultLine.textContent = 'We could not run your check. Please try again.'; completeHost(node.host, run, resultLine.textContent); return; }`<br>Both `value.host` (`sanitizeReport`) and `node.host` (`addNode` / load gate) are normalized via `normalizeHost`, so casing/trailing-dot variants of the requested host match, while any different host fails cleanly without mutating `history`, `lastReport`, or `localStorage`. Tested at `test/frontend.test.js:1134–1145` (`F2`). |
+| **F5 Policy** — Live acceptance trusts the server's timestamp for that response; stored acceptance is judged at load against the device clock (5-minute allowance) to preserve anti-forgery | **AGREE** | Documented verbatim in `ROUND3-SPEC.md:106–110`. The anti-forgery rationale is sound: once serialized to `localStorage`, a report has no cryptographic server signature, so load-time validation must bound `checkedAt <= Date.now() + 300000` against the device clock so a forged future timestamp cannot pin a node as permanently fresh. |
+| **Standing R2, R3, R5, R6′, R7′, R9–R14** | **AGREE** | Verified intact in `index.html` and covered by the 95 frontend tests in `test/frontend.test.js`. |
+
+---
+
+## 2. Attack the Fix-3 Build (`0b3c827`) Against the Canonical Contract
+
+I attacked the fix-3 build (`index.html` at `0b3c827`) across all five pillars of the canonical contract: **one shape**, **one copy per check**, **one acceptance policy**, **one identity resolution**, and **one host binding**.
+
+### What I Tried to Break (With Exact Code-Path Verification)
+
+1. **Attack Vector 1 — Can `upsertReport` on live conflict leave `lastReport`, `renderReportExtras`, or `REPORT_KEY` pointing to different object references?**
+   - Checked `index.html:1012–1014`:
+     ```js
+     progress.delete(node.host); lastReport = upsertReport(value); renderCheck(lastReport); completeHost(node.host, run); renderReportExtras(value); persistFleet();
+     try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
+     ```
+     Since `upsertReport(value)` returns `value` (`index.html:570`), `lastReport === value` and `history.at(-1) === value`. Every surface (`renderCheck`, `renderReportExtras`, `persistFleet`, `REPORT_KEY`) receives the exact same canonical object reference.
+
+2. **Attack Vector 2 — Can a live response with `host: "EXAMPLE.COM."` fail `value.host !== node.host` when checking `node.host === "example.com"`?**
+   - Checked `index.html:527` and `987–988`: `sanitizeReport` runs *before* line 988 and sets `clean.host = normalizeHost(r.host)` (`"example.com"`). And `node.host` comes from either `addNode()` (`index.html:927`, which applies `normalizeHost`) or the load gate (`index.html:598`, which applies `normalizeHost`). So both sides of `value.host !== node.host` are already canonicalized by `normalizeHost`. Casing or a trailing DNS dot from the server never causes a false mismatch.
+
+3. **Attack Vector 3 — What happens in `performCheck` when `response.ok` is `true` and `value.host !== node.host` during `Check all`? Does `check-all` abort or count it as a failed host?**
+   - Checked `index.html:988–993` and `1025–1036`:
+     When `value.host !== node.host`, `performCheck` calls `completeHost(node.host, run, resultLine.textContent)` (which increments `run.failed` and records `run.reason`) and returns `undefined`.
+     In `#check-all` (`index.html:1025–1026`), `error` is `undefined`, which is not in `['missing_access_token', 'invalid_access_token', 'no_completed_check']`, so `Check all` continues checking the remaining nodes in the fleet and finishes with partial-failure or zero-done failure copy (never stamping `lastCheckAll`). That is the exact right behavior.
+
+4. **Attack Vector 4 — What if `clean.ports` has 10 valid entries, `r.portsOpen` was omitted or `null` (e.g., `portsOpen: null` or `portsOpen: "corrupt"` repaired to `null` at line 545), and line 549 runs?**
+   - Checked `index.html:545–549`:
+     ```js
+     if ('portsOpen' in r && (!Number.isInteger(r.portsOpen) || r.portsOpen < 0 || r.portsOpen > 10)) clean.portsOpen = null;
+     ...
+     if (clean.ports?.length === 10 && clean.portsOpen != null) clean.portsOpen = clean.ports.filter(row => row.open).length;
+     ```
+     This followed `ROUND3-FIX3-SPEC.md` F6(b) literally (*"If the sanitized ports array is COMPLETE (exactly 10 entries) and portsOpen is non-null, require portsOpen === count of open entries"*). If `portsOpen` was corrupt/null, `clean.portsOpen` stays `null` (unscored) rather than inventing a score from `ports`; if `portsOpen` was a valid integer `0..10` that lied about the 10-entry array, it is corrected to match the array. Both rules are completely consistent.
+
+5. **Attack Vector 5 — What if a stored report has `checkedAt` so far in the past or future (live) that `Date.parse(r.checkedAt) + STALE_AFTER_MS - now` is `0`?**
+   - Checked `index.html:641–643` and `921–922`:
+     At `elapsed === STALE_AFTER_MS` (`delay === 0`), `staleAge` returns `null` (because `elapsed <= STALE_AFTER_MS` is fresh at exact equality).
+     At `delay === 0`, `scheduleFreshness` includes `0` (`delay >= 0`) and schedules a timer for `Math.min(2147483647, 0 + 50) = 50ms`. When that 50ms timer fires (`elapsed = STALE_AFTER_MS + 50`), `elapsed > STALE_AFTER_MS` is true (stale!) and `delay` is `-50` (`< 0`), so no further timer is scheduled. No infinite timer loop can occur at `delay === 0`.
+
+6. **Attack Vector 6 — What if `r.networkLedgerClosedAt` in a stored report is malformed or in the future relative to `r.checkedAt`?**
+   - Checked `index.html:752–754`:
+     ```js
+     const stall=document.getElementById('network-stall'), mins=Math.floor((Date.parse(r.checkedAt)-Date.parse(r.networkLedgerClosedAt))/60000);
+     stall.hidden=!(r.networkLedgerClosedAt && Number.isFinite(mins) && mins>10);
+     ```
+     If `networkLedgerClosedAt` is `'corrupt'`, `Date.parse` is `NaN`, `Number.isFinite(mins)` is `false`, and `stall.hidden` is `true`. If `networkLedgerClosedAt` is ahead of `checkedAt`, `mins <= 0`, and `stall.hidden` is `true`. Safe in every case.
+
+**Result of Attack:** **0 reproducible defects found.** Every path in `index.html` (`0b3c827`) holds the canonical contract.
+
+---
+
+## 3. One Level Deeper — The Weakest Remaining Point a World-Class Reviewer Would Still Catch
+
+### Ranked Finding: **TASTE / MINOR WEAKNESS (Non-blocking)** — Cross-Store Load Precedence (`nhr:history` vs `nhr:lastReport`) Does Not Set `storageRepaired = true` or Rewrite `nhr:lastReport` When `history` Overrides a Divergent `lastReport`
+
+- **Category:** **Taste / Minor Weakness** (explicitly non-blocking; zero visual inconsistency, because all surfaces render from the canonical `history` object).
+- **Exact File / Line Evidence (`index.html:585–590` and `1055`):**
+  ```js
+  if (lastReport) {
+    const canonical = history.find(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt);
+    if (canonical) lastReport = canonical;
+    else lastReport = upsertReport(lastReport);
+    renderCheck(lastReport);
+  }
+  ```
+  When `nhr:history` and `nhr:lastReport` contain two individually valid but conflicting payloads for the same `(host, checkedAt)` (the `E3` fixture at `test/frontend.test.js:1015–1026`), `canonical` (`history`) wins and `lastReport = canonical` unifies every in-memory surface (`#report`, `#fleet-list`, `cardLines`, `proofText`). However:
+  1. `JSON.stringify(canonical) !== JSON.stringify(savedLastReport)` does not set `storageRepaired = true`, so `#storage-repaired` stays hidden even though a cross-store conflict was resolved at load.
+  2. `persistFleet()` (`index.html:609–611`, called at `1055`) writes `FLEET_KEY` and `HISTORY_KEY`, but not `REPORT_KEY`, so the stale `nhr:lastReport` payload remains in `localStorage` (being re-overridden in memory by `canonical` on each reload) until the user runs a new check.
+- **What "Fixed" Looks Like (Parked Candidate, if ever desired):**
+  In the `if (canonical)` branch at `index.html:587`:
+  ```js
+  if (canonical) {
+    if (JSON.stringify(canonical) !== JSON.stringify(lastReport)) {
+      storageRepaired = true;
+      try { localStorage.setItem(REPORT_KEY, JSON.stringify(canonical)); } catch {}
+    }
+    lastReport = canonical;
+  }
+  ```
+  Again, because `canonical` already governs every rendered surface and export on every load, this has no effect on any displayed measurement or verdict and is strictly a storage-hygiene taste item.
+
+---
+
+## 4. Professional Standard — One Miss and One Hit in Another Lane's Cycle-3 Work
+
+### One Hit: **ChatGPT (GPT)** — Catching Unbound `value.host` on Live `/api/check` Responses (F2 / R16)
+- **Why it met the highest professional standard:** In Cycle 3 (`CYCLE3-RESPONSE-GPT.md`, §2.1), **ChatGPT** asked a foundational question about the canonical contract that neither Codex nor Gemini had asked: *"We validate that `value.host` is a non-empty hostname string, and we normalize it — but do we ever check that `value.host === node.host`?"* At `index.html:977–1002` in `a4989ca`, `performCheck` sent a request for `node.host` (`a.example`), accepted any valid report returned with HTTP 200 (even if `value.host` was `b.example`), stored it under `b.example`, and marked `a.example`'s check complete. Binding `value.host === node.host` at `index.html:988` (`F2` / `R16`) closed a genuine request-response integrity gap in one condition.
+
+### One Miss: **Nova (Cycle 3 Ruling Text for `R4'`)** — Writing `"Dropped at Load"` in `R4'` Where `E1` Specified `"Repaired to Unknown and Retained"`
+- **Why it was a notable miss:** When **Nova** drafted the Cycle 3 amended rulings (`round3-lane-board-2026-11-21.md:2054`), `R1'` (and `ROUND3-FIX2-SPEC.md` `E1`) explicitly instructed Codex to repair a malformed `sections.status` object to `{ level: '', line: 'Unknown' }` and retain the report, while the very next bullet (`R4'`) stated: *"Invalid stored lastReport is dropped at load — now including uninterpretable status shapes (E1)."* That self-contradiction between `R1'` and `R4'` forced both Codex and ChatGPT to cast `DISAGREE` on `R4'`'s literal wording in Cycle 3 even though the `E1` code and tests worked as intended. Nova owned the wording error in Reconciliation #6 (`F4`) and replaced `R4'` with `R4″` (envelope dropped / section repaired), resolving the tension cleanly.
+
+---
+
+## 5. Cycle 4 Convergence Call (Gemini Lane)
+
+- **All Standing & Amended Rulings (`R1′` with `F6`, `R2`, `R3`, `R4″`, `R5`, `R6′`, `R7′`, `R8″`, `R9–R16`, and `F5` policy):** **UNANIMOUS AGREE**.
+- **New Reproducible Material Defects:** **0**.
+- **Test Suite Verification:** **95/95 frontend tests pass locally** against hash-verified `index.html` (`1915b54f...`) and `test/frontend.test.js` (`5614de60...`); **226/226 full suite + 27/27 probes pass on Nova's run**.
+- **Final Verdict:** **CONVERGED (`0b3c827`).**
+
+**Nova's note on Gemini's R15 verdict:** Gemini's AGREE on R15 was cast in a review that did not probe timestamp typing or spelling — Codex's array reproduction and ChatGPT's alias reproduction (both Nova-verified, both on the board above) postdate its attack list. Its R15 AGREE is therefore recorded as superseded by reproduced evidence, not as a disagreement with Gemini's reasoning; it will re-verdict R15′ in cycle 5. Its remaining verdicts stand, its §0 acknowledgment applies the corrected certification standard exactly, and its §3 storage-hygiene item is parked as a named candidate (cross-store REPORT_KEY rewrite on canonical override — taste, no surface effect).
+
+---
+
+# CYCLE 4 — Codex's full response (verbatim, delivered on the continuation run)
+
+**Cycle 4 remains NOT CONVERGED: R15 is open.** I agree with the other four rulings under review. The remaining attacks found no additional material blocker.
+
+Review basis: live checkout `/home/hatch/workspace/swarm/pi-build/node-health-report`, HEAD **0b3c827**. Both SHA-256 hashes match the board exactly:
+
+- `index.html`: `1915b54f0a8688befe6f21f3fc7b5c57c8ba9fd116a1f214a31ebb6772f1d45d`
+- `test/frontend.test.js`: `5614de60f280ce28cae747a1f11b8c2d3d1855e7da7628ee14bb5bec010b4953`
+
+I reran `npm test`: **225 passed, 0 failed, 1 skipped**, out of 226 tests. The skip is the local TCP-listener test prohibited by this sandbox. No files were changed.
+
+**1. Verdict table**
+
+| Ruling | Verdict | Evidence |
+|---|---|---|
+| **R4″ — drop uninterpretable envelopes; retain repaired sections/fixes** | **AGREE** | The [gate](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:524) rejects uninterpretable envelopes and repairs malformed sections/fixes. My load probe with `sections: {status: {}}` retained one observation, repaired status to `{level: '', line: 'Unknown'}`, and set `storageRepaired`. The F4 regression also passed. |
+| **R8″ — schedule every accepted freshness boundary** | **AGREE** | The [scheduler](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:914) collects latest reports across the fleet and the visible report, removes the former acceptance-window ceiling, and caps the timeout at `2147483647` ms. Controlled-clock probes confirmed ordinary and ten-minute-ahead boundaries become stale on timer firing, and a capped timer recomputes the remaining delay. |
+| **R15 — canonical identity, last arrival wins, distinct-check threshold** | **DISAGREE** | The already verified checkedAt-array finding remains valid and directly violates R15. The [gate](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:526) does not enforce the timestamp’s type; [upsert](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:566) compares the retained value with strict equality. I accept Nova’s verification and G1 disposition. The board’s separately verified timestamp-spelling case also belongs under G1. I am not re-reporting either reproduction. |
+| **R16 — bind the response to the requested host** | **AGREE** | The [live acceptance check](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:987) rejects a sanitized host mismatch before successful observation or report-storage mutation. My wrong-host probe left history empty, `lastReport` null, and `REPORT_KEY` absent. A case/whitespace/single-trailing-dot equivalent succeeded under the normalized requested host. |
+| **R1′ as amended by F6 — shape repairs and scalar/count reconciliation** | **AGREE** | [Sanitization](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:528) repairs sections, fixes, and port rows; invalid display scalars become null; a complete sanitized ten-port array governs a non-null `portsOpen`. Partial-array semantics remain as specified. The F6 scalar/render and complete-versus-partial regression tests passed. This agreement covers those stated repairs; R15’s timestamp defect remains open independently. |
+
+**2. The rest of the attack**
+
+I exercised the remaining host and timer cases against the hash-matching build using the existing frontend harness, with probes evaluated in memory.
+
+**Host binding held for the intended normalization domain.** A response host of `" A.EXAMPLE. "` accepted for requested host `a.example`, producing one observation stored as `a.example`. A response for `b.example` to that same request produced:
+
+```text
+history.length = 0
+lastReport = null
+REPORT_KEY present = false
+```
+
+This confirms that the host comparison controls successful storage, rather than merely changing the displayed result.
+
+**Freshness scheduling held in the tested boundary cases.** Starting from a controlled clock:
+
+| Accepted timestamp relative to device now | Initial timeout | Result after firing |
+|---|---:|---|
+| Now | `86400050` ms | Fleet marked stale; no remaining freshness timer |
+| Ten minutes ahead | `87000050` ms | Fleet marked stale; no remaining freshness timer |
+| `2147483647` ms ahead | `2147483647` ms | Still fresh; replacement timeout `86400050` ms |
+
+The cap therefore causes recomputation instead of silently losing the accepted report’s eventual boundary. The existing F3 tests passed as well.
+
+**Envelope repair held.** Loading an otherwise interpretable report with an empty status object retained the report and repaired its status. That matches R4″’s corrected distinction between an uninterpretable envelope and a repairable section.
+
+**Exact string-key replay remains covered by the passing F1 tests.** Identical live replays retain one observation; conflicting replays replace the measurements; reload preserves the canonical history reference. Those tests establish the repaired insertion path for their fixtures. They do not close the accepted timestamp-domain defect already recorded under R15.
+
+I found no additional material defect in these attacks.
+
+**3. One level deeper**
+
+**Rank: weakness. Candidate: host normalization should be idempotent across accepted inputs.**
+
+The current [normalizer](/home/hatch/workspace/swarm/pi-build/node-health-report/index.html:523) removes one trailing dot. The gate accepts some malformed host strings whose identity changes when sanitized again.
+
+My direct gate probes returned:
+
+```text
+input " A.EXAMPLE. " → first "a.example"  → second "a.example"
+input "a.example.."  → first "a.example." → second "a.example"
+input ".."           → first "."          → second rejected
+```
+
+The important property is stability: a report that has passed the canonical gate should retain its identity when passed through that gate again. Otherwise persistence and reload can reinterpret a previously accepted identity.
+
+I rank this as a **weakness to park**, rather than another convergence blocker: these fixtures use malformed hostname syntax, and I did not establish a valid backend-produced report or an R16 wrong-host bypass through this route.
+
+“Fixed” would mean an explicit hostname syntax policy shared by report and fleet ingestion, with malformed forms rejected or repaired to a stable result. Pin the property that an accepted normalized host remains unchanged on subsequent sanitization. Avoid simply stripping arbitrary dot suffixes without deciding what malformed input means.
+
+**4. Professional standard — cycle 3**
+
+- **Miss — Gemini’s live-duplicate assessment.** Gemini treated the backend’s sixty-second rate limit as sufficient reason that identical timestamps were implausible, despite the frontend identity invariant and Codex’s reproduced replay. A frontend guarantee needs to survive accepted replay inputs. The board correctly declined that closure argument and adopted F1.
+- **Hit — ChatGPT’s requested-host binding finding.** ChatGPT identified that a valid report could pass sanitization while belonging to a different host from the request. That exposed a missing relationship between two otherwise valid objects. Nova verified it, adopted F2/R16, and the current mismatch probe confirms that the repair prevents successful storage.
+
+My final position is **AGREE on R4″, R8″, R16, and R1′/F6; DISAGREE on R15**. The suite is green within this sandbox’s execution limits, but the verified G1 defect means the cycle-4 convergence bar is not met.
+---
+
+# Nova reconciliation #7 — cycle 4 close (2026-11-21)
+
+**Verdict: NOT CONVERGED — one ruling open.** R1′ as amended by F6, R4″, R8″, and R16 carry AGREE from all three available lanes (Codex, ChatGPT, Gemini), each hash-verified against 0b3c827. R15 does not: Codex and ChatGPT each reproduced a distinct form of the same root defect — the gate neither type-enforces nor canonicalizes checkedAt — and Nova reproduced both. Gemini's R15 AGREE is superseded (its attack did not enter the timestamp domain). Freebuff remains platform-unavailable.
+
+**Fix pass 4 is G1 only** (spec: ROUND3-FIX4-SPEC.md): checkedAt must be a string at the gate and is rewritten to canonical UTC ISO before any keying, sorting, or storage. Amended ruling **R15′**: one canonical upsert governs (host, checkedAt) identity on load and live success, where checkedAt is a gate-canonicalized UTC ISO string — type-enforced and spelling-normalized at the same gate; last arrival wins; best-so-far counts distinct checks only.
+
+**Parked candidates (named, non-blocking, by their own authors' rankings):** (1) Gemini — cross-store canonical override does not flag storageRepaired or rewrite REPORT_KEY (storage hygiene; every surface already renders the canonical copy). (2) Codex — host normalization is not idempotent for malformed inputs ('a.example..' → 'a.example.' → 'a.example'); no valid-backend path and no R16 bypass established; a future hostname-syntax policy would pin sanitize(normalize(h)) === normalize(h) for accepted hosts. Neither blocks convergence under the bar (no reproducible material defect on a valid path).
+
+Cycle 5 reviews the fix-pass-4 build: verdicts on R15′ plus a fresh attack round. All other rulings stand as agreed and reopen only with reproduction or line-level evidence.
+
+---
+
+# FIX PASS 4 — Codex build report (verbatim)
+
+Implemented G1 in `index.html` and `test/frontend.test.js`:
+
+- Non-string `checkedAt` values are rejected at the gate.
+- Valid timestamps are canonicalized with `toISOString()` before downstream use.
+- Stored aliases flag repair; live normalization suppresses the repair flag.
+- Upsert comparison remains unchanged.
+- Added all five tests (a)–(e); updated existing timestamp expectations.
+
+`npm test`: **230 passed, 0 failed, 1 skipped** (sandbox prohibits local TCP listeners).
+
+`git diff --check`: existing lane-board whitespace errors remain; both edited files pass.
+
+`api/` untouched. Amounts remain 1 / 0.5; Pi.init and API_BASE lines are byte-identical.
+
+Second key-field issue: malformed host normalization is non-idempotent (`a.example..` → `a.example.` → `a.example`). Left unchanged per scope.
+
+Nothing omitted from G1.
+
+## Nova verification of fix pass 4 (2026-11-21)
+
+- Read the implementation at the live path: `index.html:526` now requires `typeof r.checkedAt === 'string'`; `index.html:528` rewrites `clean.checkedAt` with `new Date(Date.parse(r.checkedAt)).toISOString()`.
+- All five G1 tests pass: non-string stored/live rejection, stored aliases collapse with last arrival winning, live offset alias replacement without a repair hint, canonical backend spelling byte-identical with no repair flag, and history/lastReport alias consistency across reload.
+- Initial Nova full-suite run found one unrelated failure in `removing the final node stays removed after reload without erasing history`. Diagnosis: the test used a fixed 2026-11-20 timestamp; once that fixture crossed the 24-hour stale boundary, the fleet card correctly inserted a stale note and shifted the Remove button's child index. The same failure reproduced on unmodified HEAD, proving it was not a G1 regression. The fixture now uses the current timestamp, preserving the test's intent; no product code was changed for this failure.
+- After that test-fixture correction: **full suite 231/231 passed, 0 failed, 0 skipped on Nova's run; frontend suite 100/100.** Edited-file `git diff --check` is clean. `api/` is unchanged. Pi.init, API_BASE, and amount lines are byte-identical to HEAD.
+- Tested-build SHA-256: index.html `9a169d0b61cadd9c96f67ea604bc1f754a9ac6f2888e02352e4ff809ddf88a47`; test/frontend.test.js `37cf120e566ae249a27c1acd59c4b202e284f7adcc76e4dc54fd1dec0c6e8b64`.
+
+---
+
+# CYCLE 5 — identical brief to every lane
+
+Review the fix-pass-4 build at the hashes above. The only amended ruling under verdict is:
+
+- **R15′** — one canonical upsert governs (host, checkedAt) identity on load and live success, where checkedAt is a gate-canonicalized UTC ISO string: type-enforced as a string and spelling-normalized at the same gate; last arrival wins a conflict; best-so-far counts distinct checks only.
+
+Also give a verdict on **V1**, Nova's test-fixture correction: the final-node removal test now uses a current timestamp instead of a fixed 2026-11-20 timestamp after the fixed fixture crossed the 24-hour stale boundary and shifted the card's child order. State whether that correction preserves the test's intent without weakening a product rule.
+
+All other rulings stand as agreed in cycle 4 and reopen only with a reproduction or line-level evidence. Follow the standing four-part cycle form:
+
+1. **Verdict table** — AGREE or DISAGREE on R15′ and V1, with file/line evidence; for any defect claim, give the exact reproduction.
+2. **Attack the current build** — try to break canonical identity, host binding, freshness, repair, and rendering. If you cannot break it, say what you tried.
+3. **One level deeper** — name the weakest remaining point a world-class reviewer would still catch, ranked defect / weakness / taste, and state what fixed looks like.
+4. **Professional standard** — name one miss and one hit in another lane's cycle-4 work, or Nova's, by name.
+
+Convergence bar: every available lane AGREEs on R15′ and V1; no lane raises a NEW material defect that Nova can reproduce; the full suite is green on Nova's run. Parked candidates remain parked unless you reproduce a material defect on a valid path.

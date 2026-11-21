@@ -523,8 +523,9 @@
   const normalizeHost = host => host.trim().toLowerCase().replace(/\.$/, '');
   function sanitizeReport(r, now = Date.now(), options = {}) {
     const drop = () => { if (!options.live) storageRepaired = true; return null; };
-    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.host !== 'string' || !normalizeHost(r.host) || !r.sections || typeof r.sections !== 'object' || Array.isArray(r.sections) || !Number.isFinite(Date.parse(r.checkedAt)) || Date.parse(r.checkedAt) > now + 300000) return drop();
+    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.host !== 'string' || typeof r.checkedAt !== 'string' || !normalizeHost(r.host) || !r.sections || typeof r.sections !== 'object' || Array.isArray(r.sections) || !Number.isFinite(Date.parse(r.checkedAt)) || Date.parse(r.checkedAt) > now + 300000) return drop();
     const clean = { ...r, host: normalizeHost(r.host), sections: { ...r.sections } };
+    clean.checkedAt = new Date(Date.parse(r.checkedAt)).toISOString();
     clean.fixes = Array.isArray(r.fixes) ? r.fixes.filter(f => f && typeof f === 'object' && typeof f.title === 'string').map(f => ({ ...f, why: typeof f.why === 'string' ? f.why : '', how: typeof f.how === 'string' ? f.how : '' })) : [];
     for (const key of ['status', 'sync', 'ports']) {
       const section = clean.sections[key];

@@ -368,7 +368,7 @@ test('dark tokens carry readable text contrast including tinted panels', () => {
 });
 
 test('removing the final node stays removed after reload without erasing history', () => {
-  const report = observed('example.com', '2026-11-20T12:00:00Z', 0, 'ok');
+  const report = observed('example.com', new Date().toISOString(), 0, 'ok');
   const storage = new Map([['nhr:lastReport', JSON.stringify(report)]]);
   const b = browser({ storage });
   b.element('fleet-list').children.at(-1).children[3].onclick();
@@ -380,7 +380,7 @@ test('removing the final node stays removed after reload without erasing history
 test('stored verdict severity change records its real timestamp even when both are behind', () => {
   const reports = [observed('example.com', '2026-11-20T10:00:00Z', 100), observed('example.com', '2026-11-20T11:00:00Z', 2000, 'bad')];
   const b = browser({ storage: new Map([['nhr:history', JSON.stringify(reports)]]) });
-  assert.equal(evaluate(b, "changedAt('example.com')"), '2026-11-20T11:00:00Z');
+  assert.equal(evaluate(b, "changedAt('example.com')"), '2026-11-20T11:00:00.000Z');
 });
 
 test('fix panel excludes healthy reports and ranks severity, closed ports, then gap', () => {
@@ -955,7 +955,7 @@ test('L6 legacy report renders and completes share and proof exports', async () 
   assert.match(evaluate(b,'proofText(lastReport)'),/Sync: Unknown\nPorts: Unknown/);
 });
 test('gate repair matrix preserves valid fields and flags only actual changes', () => {
-  const b=browser(), valid=observed('a','2026-11-20T12:00:00Z',0,'ok');
+  const b=browser(), valid=observed('a','2026-11-20T12:00:00.000Z',0,'ok');
   for(const [field,values] of [['syncGap',[-1,1.5,'1',{}]],['portsOpen',[-1,11,9.5,'10',{}]]]) for(const value of values) {
     evaluate(b,'storageRepaired=false');
     assert.equal(evaluate(b,'sanitizeReport('+JSON.stringify({...valid,[field]:value})+')['+JSON.stringify(field)+']'),null);
@@ -984,7 +984,7 @@ test('fresh response gate repairs optional fields and retains a live future resp
   for(const checkedAt of ['2026-11-20T12:00:00Z',new Date(Date.now()+360000).toISOString()]) {
     const r={...observed('example.com',checkedAt,0,'ok'),fixes:{}};
     const b=browser({checkResponse:r});await runCheck(b);
-    assert.equal(evaluate(b,'history.length'),1);assert.equal(evaluate(b,'lastReport.checkedAt'),checkedAt);
+    assert.equal(evaluate(b,'history.length'),1);assert.equal(evaluate(b,'lastReport.checkedAt'),new Date(Date.parse(checkedAt)).toISOString());
   }
 });
 
@@ -1174,7 +1174,7 @@ test('F4 status object without a line is retained, repaired and exported through
 
 test('F6 display scalars repair to null and render unknown or absent', () => {
   for (const field of ['networkLedger','nodeLedger','currentProtocolVersion']) for (const value of [-1,1.5,'corrupt',{},null]) {
-    const r={...observed('a','2026-11-20T12:00:00Z',0,'ok'),[field]:value};
+    const r={...observed('a','2026-11-20T12:00:00.000Z',0,'ok'),[field]:value};
     const b=browser({storage:new Map([['nhr:lastReport',JSON.stringify(r)]])});
     assert.equal(evaluate(b,'lastReport.'+field),null);
     assert.equal(evaluate(b,'storageRepaired'),value!==null);
@@ -1186,10 +1186,84 @@ test('F6 display scalars repair to null and render unknown or absent', () => {
 test('F6 complete ports govern count while partial arrays retain the standing split', () => {
   const ports=Array.from({length:10},(_,i)=>({port:31400+i,open:i<3}));
   for (const complete of [true,false]) {
-    const r={...observed('a','2026-11-20T12:00:00Z',0,'ok'),ports:complete?ports:ports.slice(0,3),portsOpen:10};
+    const r={...observed('a','2026-11-20T12:00:00.000Z',0,'ok'),ports:complete?ports:ports.slice(0,3),portsOpen:10};
     const b=browser();
     evaluate(b,'storageRepaired=false;lastReport=sanitizeReport('+JSON.stringify(r)+')');
     assert.equal(evaluate(b,'lastReport.portsOpen'),complete?3:10);
     assert.equal(evaluate(b,'storageRepaired'),complete);
+  }
+});
+
+test('G1(a) non-string checkedAt drops stored envelopes and fails live checks', async () => {
+  for (const checkedAt of [['2026-11-20T12:00:00Z'], 2026, { value: '2026-11-20T12:00:00Z' }]) {
+    const r=observed('example.com',checkedAt,0,'ok');
+    const storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',JSON.stringify(r)]]);
+    const loaded=browser({storage});
+    assert.equal(evaluate(loaded,'history.length'),0);
+    assert.equal(evaluate(loaded,'lastReport'),null);
+    assert.equal(evaluate(loaded,'storageRepaired'),true);
+    assert.deepEqual(JSON.parse(storage.get('nhr:history')),[]);
+    const liveStorage=new Map(), live=browser({storage:liveStorage,checkResponse:r});
+    await runCheck(live);
+    assert.equal(live.element('check-result').textContent,'We could not run your check. Please try again.');
+    assert.equal(evaluate(live,'history.length'),0);
+    assert.equal(evaluate(live,'lastReport'),null);
+    assert.equal(liveStorage.has('nhr:lastReport'),false);
+    assert.deepEqual(JSON.parse(liveStorage.get('nhr:history')),[]);
+    assert.equal(evaluate(live,'storageRepaired'),false);
+  }
+});
+
+test('G1(b) stored timestamp aliases collapse to one distinct check with last arrival winning', () => {
+  const first=observed('example.com','2026-11-20T12:00:00Z',0,'ok');
+  const second={...first,checkedAt:'2026-11-20T06:00:00-06:00',syncGap:100};
+  const storage=new Map([['nhr:history',JSON.stringify([first,second])]]), b=browser({storage});
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'history[0].checkedAt'),'2026-11-20T12:00:00.000Z');
+  assert.equal(evaluate(b,'history[0].syncGap'),100);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.equal(evaluate(b,'storageRepaired'),true);
+  assert.equal(JSON.parse(storage.get('nhr:history')).length,1);
+});
+
+test('G1(c) live offset alias replaces the stored canonical check without a repair hint', async () => {
+  const first=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const second={...first,checkedAt:'2026-11-20T06:00:00-06:00',syncGap:100};
+  const storage=new Map([['nhr:history',JSON.stringify([first])]]), b=browser({storage,checkResponse:second});
+  await runCheck(b);
+  assert.equal(evaluate(b,'history.length'),1);
+  assert.equal(evaluate(b,'lastReport === history[0]'),true);
+  assert.equal(evaluate(b,'lastReport.syncGap'),100);
+  assert.equal(evaluate(b,'bestFor("example.com")'),null);
+  assert.equal(evaluate(b,'storageRepaired'),false);
+  assert.equal(b.element('storage-repaired').hidden,true);
+  for (const r of [JSON.parse(storage.get('nhr:lastReport')), ...JSON.parse(storage.get('nhr:history'))]) {
+    assert.equal(r.checkedAt,first.checkedAt);
+    assert.equal(r.syncGap,100);
+  }
+});
+
+test('G1(d) canonical backend spelling passes byte-identical without storage repair', () => {
+  const r=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const raw=JSON.stringify(r), storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',raw]]);
+  const b=browser({storage});
+  assert.equal(evaluate(b,'JSON.stringify(sanitizeReport(lastReport))'),raw);
+  assert.equal(evaluate(b,'storageRepaired'),false);
+  assert.equal(b.element('storage-repaired').hidden,true);
+  assert.equal(storage.get('nhr:lastReport'),raw);
+  assert.equal(storage.get('nhr:history'),JSON.stringify([r]));
+});
+
+test('G1(e) history and alias lastReport retain one canonical copy across reload', () => {
+  const r=observed('example.com','2026-11-20T12:00:00.000Z',0,'ok');
+  const storage=new Map([['nhr:history',JSON.stringify([r])],['nhr:lastReport',JSON.stringify({...r,checkedAt:'2026-11-20T06:00:00-06:00'})]]);
+  for (let reload=0;reload<2;reload++) {
+    const b=browser({storage});
+    assert.equal(evaluate(b,'history.length'),1);
+    assert.equal(evaluate(b,'lastReport === history[0]'),true);
+    assert.equal(evaluate(b,'lastReport.checkedAt'),r.checkedAt);
+    assert.equal(evaluate(b,'bestFor("example.com")'),null);
+    assert.equal(JSON.parse(storage.get('nhr:history')).length,1);
+    assert.equal(JSON.parse(storage.get('nhr:history'))[0].checkedAt,r.checkedAt);
   }
 });
