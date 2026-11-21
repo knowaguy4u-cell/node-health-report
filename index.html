@@ -13,9 +13,10 @@
   .kicker, header, dt { font-size: .75rem; text-transform: uppercase; letter-spacing: .18em; color: #94a3b8; }
   h1 { font: normal clamp(2rem, 6vw, 3.5rem)/1.15 "Times New Roman", Times, serif; }
   h2, h3 { line-height: 1.3; }
-  main > section { border: 1px solid rgba(148,163,184,.25); background: #0a1122; padding: 1.4rem; margin: 0 0 1rem; }
+  main > section { border: 1px solid rgba(148,163,184,.5); background: #0b1326; padding: 1.4rem; margin: 0 0 1.5rem; }
   .fleet-entry { padding: 1rem 0; border-top: 1px solid rgba(148,163,184,.16); }
   #run-panel { border: 1px solid rgba(148,163,184,.16); background: #060b18; padding: 1rem; margin-top: 1rem; }
+  #report > h3 { border-top: 1px solid rgba(148,163,184,.3); padding-top: 1.2rem; margin-top: 1.5rem; }
   .pill, .badge { display: inline-block; padding: .35rem .7rem; border-radius: 2rem; font: .75rem/1.5 "Times New Roman", Times, serif; letter-spacing: .06em; }
   .ok, .success { color: #34d399; } .warn, .working { color: #f59e0b; } .bad, .error { color: #f87171; }
   .pill.ok, #network-note { background: rgba(52,211,153,.09); }
@@ -36,9 +37,9 @@
   .steps { display: flex; gap: 1rem; padding: 0; list-style: none; color: #94a3b8; } .current { color: #e6edf7; } .done { color: #34d399; }
   .checks { padding: 0; list-style: none; } .checks li { border-bottom: 1px solid rgba(148,163,184,.16); padding: .8rem 0; } .checks span { display: block; }
   .status-area { display: flex; flex-direction: column; } .status-banner { order: -1; overflow-wrap: anywhere; }
-  #fixes-panel { padding: 1.3rem; background: linear-gradient(135deg, rgba(245,166,35,.15), rgba(245,166,35,.05)); border: 1px solid rgba(245,158,11,.35); }
-  #fixes { padding-left: 1.2rem; font: 1.3rem/1.5 "Times New Roman", Times, serif; } #network-note { padding: 1rem; color: #34d399; }
-  footer { border: 1px solid rgba(148,163,184,.25); background: #0a1122; padding: 1.4rem; } [hidden] { display: none !important; }
+  #fixes-panel { padding: 1.3rem; background: linear-gradient(135deg, rgba(245,166,35,.15), rgba(245,166,35,.05)); border: 1px solid rgba(245,158,11,.6); }
+  #fixes { padding-left: 1.2rem; font: 1.3rem/1.5 "Times New Roman", Times, serif; } #network-note { padding: 1rem; color: #34d399; border: 1px solid rgba(52,211,153,.45); margin: 0 0 1.5rem; }
+  footer { border: 1px solid rgba(148,163,184,.5); background: #0b1326; padding: 1.4rem; } [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -57,12 +58,14 @@
     <h2 class="kicker">WHAT TO FIX FIRST</h2><ol id="fixes"></ol>
   </section>
   <p id="network-note" hidden></p>
+  <section aria-label="Mode and progress">
   <p class="badge">Test mode — Test-Pi is test money with no real value.</p>
   <ol class="steps" aria-label="Your progress">
     <li id="step-signin" class="current" aria-current="step"><span class="num">1</span> Sign in</li>
     <li id="step-check"><span class="num">2</span> Health check</li>
     <li id="step-payout"><span class="num">3</span> Test payout</li>
   </ol>
+  </section>
   <section class="card" aria-labelledby="signin-title">
     <h2 id="signin-title">Start with your Pi account</h2>
     <p id="signin-help">Sign in with your Pi account so the app can run your check and send your payout.</p>
