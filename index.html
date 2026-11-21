@@ -52,7 +52,7 @@
   h2 { font-size: 1.45rem; font-weight: normal; line-height: 1.28; letter-spacing: -.008em; margin: 0 0 .75rem; color: #e6edf7; }
   h3 { font-size: 1.15rem; font-weight: normal; line-height: 1.3; letter-spacing: -.005em; margin: 0 0 .75rem; color: #e6edf7; }
   p { margin: .75rem 0; }
-  main > section {
+  main > section, #network-note {
     background: #0b1326;
     border: 1px solid rgba(148,163,184,.30);
     border-top-color: rgba(148,163,184,.42);
@@ -65,27 +65,41 @@
     border-top-color: rgba(148,163,184,.52);
     padding: clamp(1.35rem, 4.5vw, 2.25rem);
   }
+  main > section > h2:not(.kicker) {
+    padding-bottom: .65rem;
+    margin-bottom: .9rem;
+    border-bottom: 1px solid rgba(148,163,184,.18);
+  }
   section > :first-child { margin-top: 0; }
   section > :last-child { margin-bottom: 0; }
   #observation-date { margin: 0; }
   #observation-date .num { font-size: .76rem; letter-spacing: .08em; color: #e6edf7; }
   #network-observation {
     margin: .7rem 0 1.45rem;
-    padding: .55rem .85rem;
+    padding: .6rem .9rem;
     background: #060b18;
-    border: 1px solid rgba(148,163,184,.20);
+    border: 1px solid rgba(148,163,184,.22);
+    border-left: 2px solid rgba(148,163,184,.48);
     border-radius: .25rem;
     font-size: .76rem;
     line-height: 1.7;
     letter-spacing: .10em;
     color: #94a3b8;
+    box-shadow: inset 0 1px 4px rgba(0,0,0,.6);
     overflow-wrap: anywhere;
   }
   #network-observation .obs-val { color: #e6edf7; letter-spacing: .04em; }
   #fleet-verdict + .hint { margin: 0; max-width: 56ch; font-size: .95rem; line-height: 1.55; }
   #fleet-list { margin: 1.6rem 0; }
-  .fleet-entry { padding: 1.45rem 0; border-top: 1px solid rgba(148,163,184,.18); }
-  .fleet-entry:last-child { border-bottom: 1px solid rgba(148,163,184,.18); }
+  .fleet-entry {
+    padding: 1.35rem 1.25rem;
+    margin: .85rem 0;
+    background: rgba(6,11,24,.55);
+    border: 1px solid rgba(148,163,184,.20);
+    border-top-color: rgba(148,163,184,.28);
+    border-radius: .3rem;
+    box-shadow: inset 0 1px 0 rgba(230,237,247,.03);
+  }
   .entry-heading { gap: .5rem 1rem; align-items: center; }
   .entry-heading strong { font-size: 1.24rem; letter-spacing: -.005em; color: #e6edf7; min-width: 0; overflow-wrap: anywhere; }
   .fleet-entry > .hint { display: block; overflow-wrap: anywhere; }
@@ -97,14 +111,14 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1px;
     margin: 1.05rem 0;
-    background: rgba(148,163,184,.18);
-    border: 1px solid rgba(148,163,184,.20);
+    background: rgba(148,163,184,.22);
+    border: 1px solid rgba(148,163,184,.24);
     border-radius: .25rem;
     overflow: hidden;
   }
-  .fleet-entry dl > div { background: #060b18; padding: .65rem .75rem; }
+  .fleet-entry dl > div { background: #060b18; padding: .7rem .8rem; transition: background-color .15s ease; }
   .fleet-entry dt { font-size: .64rem; letter-spacing: .16em; color: #94a3b8; }
-  .fleet-entry dd { margin: .3rem 0 0; font-size: .94rem; color: #e6edf7; overflow-wrap: anywhere; }
+  .fleet-entry dd { margin: .3rem 0 0; font-size: .94rem; font-weight: 500; color: #e6edf7; overflow-wrap: anywhere; }
   .fleet-entry button {
     font-size: .88rem;
     padding: .5rem .9rem;
@@ -131,7 +145,7 @@
     text-transform: uppercase;
     white-space: nowrap;
   }
-  .pill::before { content: ""; width: .38rem; height: .38rem; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .pill::before { content: ""; width: .38rem; height: .38rem; border-radius: 50%; background: currentColor; flex-shrink: 0; box-shadow: 0 0 5px currentColor; }
   .pill.ok { color: #34d399; background: rgba(52,211,153,.09); border-color: rgba(52,211,153,.42); }
   .pill.warn { color: #f59e0b; background: rgba(245,158,11,.09); border-color: rgba(245,158,11,.46); }
   .pill.bad { color: #f87171; background: rgba(248,113,113,.10); border-color: rgba(248,113,113,.46); }
@@ -146,7 +160,12 @@
     color: #f59e0b;
     background: rgba(245,158,11,.09);
   }
-  .queue-note { border-left: 2px solid rgba(245,158,11,.65); padding-left: .85rem; }
+  .queue-note {
+    border-left: 2px solid rgba(245,158,11,.65);
+    padding: .45rem .85rem;
+    background: rgba(245,158,11,.05);
+    border-radius: 0 .25rem .25rem 0;
+  }
   .empty-state {
     padding: 1.35rem 1.4rem;
     background: #060b18;
@@ -173,7 +192,7 @@
   button:not(:disabled):active { background: rgba(148,163,184,.20); }
   button:disabled { color: #94a3b8; background: transparent; border-style: dashed; border-color: rgba(148,163,184,.40); cursor: default; }
   #signin, #check-all, #run-check { border-color: rgba(52,211,153,.65); background: rgba(52,211,153,.09); }
-  #signin:not(:disabled):hover, #check-all:not(:disabled):hover, #run-check:not(:disabled):hover { background: rgba(52,211,153,.18); border-color: #34d399; }
+  #signin:not(:disabled):hover, #check-all:not(:disabled):hover, #run-check:not(:disabled):hover { background: rgba(52,211,153,.18); border-color: #34d399; box-shadow: 0 0 12px rgba(52,211,153,.14); }
   #signin:not(:disabled):active, #check-all:not(:disabled):active, #run-check:not(:disabled):active { background: rgba(52,211,153,.24); }
   #signin:disabled, #check-all:disabled, #run-check:disabled { background: transparent; border-color: rgba(148,163,184,.40); }
   :focus-visible { outline: 2px solid #f59e0b; outline-offset: 2px; }
@@ -189,6 +208,7 @@
     border: 1px solid rgba(148,163,184,.42);
     border-radius: .25rem;
     font: inherit;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.5);
     transition: border-color .15s ease;
   }
   input:not([type=checkbox]):hover, input:not([type=checkbox]):focus-visible { border-color: #e6edf7; }
@@ -307,7 +327,7 @@
     <p class="hint">This view refreshes stored states when opened. Checks run here while this page is open.</p>
     <div id="fleet-list" aria-live="polite"></div>
     <button id="check-all">Check all</button>
-    <p id="fleet-progress" role="status"></p>
+    <p id="fleet-progress" role="status" aria-live="polite"></p>
   </section>
   <section id="fixes-panel" class="card" hidden aria-live="polite">
     <h2 class="kicker">WHAT TO FIX FIRST</h2><ol id="fixes"></ol>
