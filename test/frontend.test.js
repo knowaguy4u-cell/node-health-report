@@ -44,7 +44,7 @@ function browser({ hostname = 'localhost', incomplete = false, fail = false, sto
     },
   });
   vm.runInContext(source, context);
-  return { element, calls, selectApiBase: context.selectApiBase, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
+  return { element, calls, selectApiBase: context.selectApiBase, selectSandbox: context.selectSandbox, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
 }
 
 test('frontend queues incomplete payment until the token is available', async () => {
@@ -205,14 +205,20 @@ test('frontend purchase and payout buttons describe their existing status lines'
 });
 
 
-for (const hostname of ['nodehealthreport3739.pinet.com', 'testjra7998.pinet.com', 'localhost',
-  'node-health-report.vercel.app', 'knowaguy4u-cell.github.io']) {
-  test(`frontend selects the backend for ${hostname}`, async () => {
+for (const [hostname, expected, sandbox] of [
+  ['nodehealthreport3739.pinet.com', 'https://node-health-report.vercel.app', false],
+  ['node-health-report.vercel.app', 'https://node-health-report.vercel.app', false],
+  ['testjra7998.pinet.com', 'https://node-health-report-testnet.vercel.app', true],
+  ['node-health-report-testnet.vercel.app', 'https://node-health-report-testnet.vercel.app', true],
+  ['knowaguy4u-cell.github.io', 'https://node-health-report-testnet.vercel.app', true],
+  ['localhost', 'https://node-health-report-testnet.vercel.app', true],
+]) {
+  test(`frontend selects the backend and sandbox mode for ${hostname}`, async () => {
     const b = browser({ hostname });
-    const expected = hostname === 'nodehealthreport3739.pinet.com'
-      ? 'https://node-health-report.vercel.app'
-      : 'https://node-health-report-testnet.vercel.app';
     assert.equal(b.selectApiBase(hostname), expected);
+    assert.equal(b.selectSandbox(hostname), sandbox);
+    assert.equal(b.init.sandbox, sandbox);
+    assert.equal(b.init.version, '2.0');
     await b.element('signin').click();
     await b.element('payout').click();
     assert.equal(b.calls[0].url, expected + '/api/payout');

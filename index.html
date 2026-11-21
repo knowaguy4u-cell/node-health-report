@@ -100,15 +100,17 @@
 
 <script>
   function selectApiBase(hostname) {
-    // Pi Browser loads Production through its pinet address; the sandbox and
+    // The Production pinet address and deployment domain use Mainnet;
     // all other surfaces are Testnet.
-    return hostname === 'nodehealthreport3739.pinet.com'
+    return hostname === 'nodehealthreport3739.pinet.com' || hostname === 'node-health-report.vercel.app'
       ? 'https://node-health-report.vercel.app'
       : 'https://node-health-report-testnet.vercel.app';
   }
+  function selectSandbox(hostname) {
+    return selectApiBase(hostname) === 'https://node-health-report-testnet.vercel.app';
+  }
   const API_BASE = selectApiBase(window.location.hostname);
-  // Testnet app: sandbox mode stays on until a Production app exists.
-  Pi.init({ version: "2.0", sandbox: true });
+  Pi.init({ version: "2.0", sandbox: selectSandbox(window.location.hostname) });
 
   const status = document.getElementById('auth-status');
   const messages = document.getElementById('payment-status');
