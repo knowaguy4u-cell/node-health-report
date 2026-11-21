@@ -264,6 +264,7 @@
   #run-form > label { display: block; font-size: .92rem; color: #e6edf7; }
   #run-form > button { margin: .25rem .5rem .25rem 0; }
   #report > h3 { border-top: 1px solid rgba(148,163,184,.22); padding-top: 1.35rem; margin-top: 1.65rem; }
+  #score-value { font-size: 1.55rem; line-height: 1.3; margin: .35rem 0; }
   .status-area { display: flex; flex-direction: column; margin-top: 1.5rem; border-top: 1px solid rgba(148,163,184,.22); }
   .status-banner { order: -1; padding: .85rem 0 .6rem; overflow-wrap: anywhere; }
   details ol { padding-left: 1.35rem; font-size: .9rem; line-height: 1.65; }
@@ -535,7 +536,7 @@
     if (!score) { document.getElementById('score-value').textContent = "Not scored yet — enter your node's current ledger so sync can be measured."; document.getElementById('score-fix').textContent = ''; }
     else {
       const band = scoreBand(score.value), cls = band === 'Healthy' ? 'ok' : band === 'Good' || band === 'Needs a look' ? 'warn' : 'bad';
-      renderParts(document.getElementById('score-value'), [[String(score.value), 'num ' + cls], [' of 100 — ' + band]]);
+      renderParts(document.getElementById('score-value'), [[String(score.value), 'num ' + cls], [' of '], ['100', 'num'], [' — ' + band]]);
       renderWithNums(document.getElementById('score-fix'), scoreFix(r, score));
     }
     const trend = trendFor(r.host), changed = changesFor(r.host);
@@ -604,7 +605,7 @@
       const trend = trendFor(node.host), whatChanged = changesFor(node.host);
       if (trend) words.push(trend);
       if (whatChanged) words.push(whatChanged);
-      if (words.length) append(entry, 'p', words.join(' · '), state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint');
+      if (words.length) renderWithNums(append(entry, 'p', '', state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint'), words.join(' · '));
       const remove = append(entry, 'button', 'Remove ' + node.label);
       remove.onclick = () => { fleet = fleet.filter(n => n.host !== node.host); persistFleet(); renderFleet(); };
     }

@@ -9,20 +9,21 @@ const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
   const elements = new Map();
+  const makeElement = () => {
+    const el = {
+      hidden: true, disabled: false, children: [],
+      addEventListener(event, callback) { this[event] = callback; },
+      appendChild(child) { this.children.push(child); },
+    };
+    let own = '';
+    Object.defineProperty(el, 'textContent', {
+      get() { return own + this.children.map(child => child.textContent ?? '').join(''); },
+      set(value) { own = String(value); this.children = []; },
+    });
+    return el;
+  };
   const element = id => {
-    if (!elements.has(id)) {
-      const el = {
-        hidden: true, disabled: false, children: [],
-        addEventListener(event, callback) { this[event] = callback; },
-        appendChild(child) { this.children.push(child); },
-      };
-      let own = '';
-      Object.defineProperty(el, 'textContent', {
-        get() { return own + this.children.map(child => child.textContent ?? '').join(''); },
-        set(value) { own = String(value); this.children = []; },
-      });
-      elements.set(id, el);
-    }
+    if (!elements.has(id)) elements.set(id, makeElement());
     return elements.get(id);
   };
   const calls = [];
@@ -41,7 +42,7 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     setItem: (key, value) => storage.set(key, String(value)),
     removeItem: key => storage.delete(key),
   };
-  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: () => ({ children: [], appendChild(child) { this.children.push(child); } }) },
+  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: makeElement },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       if (url.endsWith('/api/check')) {
@@ -600,4 +601,16 @@ test('trend direction reads the shown series from first to last', () => {
   const b = browser();
   evaluate(b, 'history = ' + JSON.stringify([1, 50, 40, 30, 20, 25].map((g, i) => observed('a', '2026-11-20T0' + i + ':00:00Z', g))));
   assert.match(evaluate(b, "trendFor('a')"), /50 → 40 → 30 → 20 → 25 — closing\./);
+});
+test('score value and fleet trend numbers render in monospace spans', () => {
+  const r = observed('a.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(r)]]) });
+  assert.deepEqual(b.element('score-value').children.filter(c => (c.className || '').includes('num')).map(c => c.textContent), ['100', '100']);
+  const a = observed('h.example', '2026-11-20T10:00:00Z', 100, 'warn', 8);
+  const z = observed('h.example', '2026-11-20T11:00:00Z', 0, 'ok', 10);
+  const c = browser({ storage: new Map([['nhr:fleet', JSON.stringify([{ host: 'h.example', label: 'H' }])], ['nhr:history', JSON.stringify([a, z])]]) });
+  const words = c.element('fleet-list').children[0].children[3];
+  assert.match(words.textContent, /across your checks/);
+  const nums = words.children.filter(x => x.className === 'num').map(x => x.textContent);
+  assert.ok(nums.includes('100') && nums.includes('0'), 'trend numbers are .num spans: ' + nums.join(','));
 });
