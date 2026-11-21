@@ -8,6 +8,7 @@ const { createCheck, probePorts, validHost, verdicts } = require('../api/_lib/ch
 const { MemoryStore } = require('../api/_lib/store');
 const { createLedger, HORIZON } = require('../api/_lib/stellar');
 const { handler } = require('../api/_lib/http');
+const { HttpError } = require('../api/_lib/errors');
 
 const ports = open => Array.from({ length: 10 }, (_, i) => ({ port: 31400 + i, open }));
 
@@ -116,6 +117,85 @@ for (const change of [p => { p.user_uid = 'other'; }, p => { p.amount = 2; }, p 
     assert.equal(f.probes(), 0);
   });
 }
+
+test('check uses the store index when the wallet has no chain candidates', async () => {
+  const f = fixture();
+  f.ledger.findPaymentsFrom = async () => [];
+  await f.store.set('user-payment:user', 'purchase');
+  const report = await f.check(request);
+  assert.equal(report.portsOpen, 10);
+  assert.equal(report.networkLedger, 100);
+  assert.equal(f.probes(), 1);
+});
+
+test('check accepts a payment hint without wallet scope or a store index', async () => {
+  const f = fixture();
+  f.setUser({ uid: 'user' });
+  assert.equal(await f.store.get('user-payment:user'), undefined);
+  assert.equal((await f.check({ ...request, paymentId: 'purchase' })).portsOpen, 10);
+  assert.equal(f.probes(), 1);
+});
+
+test('check propagates an invalid Pi identifier from the store-index proof', async () => {
+  const f = fixture();
+  f.ledger.findPaymentsFrom = async () => [];
+  await f.store.set('user-payment:user', 'purchase');
+  f.purchase.identifier = 'different';
+  await assert.rejects(f.check(request), { status: 502, code: 'invalid_pi_response' });
+  assert.equal(f.probes(), 0);
+});
+
+test('check rejects a nonexistent payment hint as missing entitlement', async () => {
+  const f = fixture();
+  f.setUser({ uid: 'user' });
+  const error = new HttpError(502, 'pi_request_failed');
+  error.upstreamStatus = 404;
+  const check = createCheck({
+    pi: { getMe: async () => ({ uid: 'user' }), getPayment: async () => { throw error; } },
+    ledger: f.ledger, store: f.store,
+    probe: async () => { assert.fail('probe should not be called'); },
+  });
+  await assert.rejects(check({ ...request, paymentId: 'missing' }), {
+    status: 403, code: 'no_completed_check',
+  });
+});
+
+for (const [name, change] of [
+  ['wrong amount', p => { p.amount = 2; }],
+  ['wrong product', p => { p.metadata.product = 'other'; }],
+  ['wrong direction', p => { p.direction = 'app_to_user'; }],
+  ['cancelled', p => { p.status.cancelled = true; }],
+  ['missing completed flags', p => { p.status = {}; p.transaction = {}; }],
+]) {
+  test(`check rejects a payment hint with ${name}`, async () => {
+    const f = fixture();
+    f.setUser({ uid: 'user' });
+    change(f.purchase);
+    await assert.rejects(f.check({ ...request, paymentId: 'purchase' }), {
+      status: 403, code: 'no_completed_check',
+    });
+    assert.equal(f.probes(), 0);
+  });
+}
+
+test('check rejects a non-string payment hint without other proof', async () => {
+  const f = fixture();
+  f.setUser({ uid: 'user' });
+  await assert.rejects(f.check({ ...request, paymentId: 1234 }), {
+    status: 403, code: 'no_completed_check',
+  });
+  assert.equal(f.probes(), 0);
+});
+
+test('check rejects a payment hint belonging to another user', async () => {
+  const f = fixture();
+  f.setUser({ uid: 'user' });
+  f.purchase.user_uid = 'other';
+  await assert.rejects(f.check({ ...request, paymentId: 'purchase' }), {
+    status: 403, code: 'no_completed_check',
+  });
+  assert.equal(f.probes(), 0);
+});
 
 test('check falls back to validated store index without wallet scope', async () => {
   const f = fixture(); f.setUser({ uid: 'user' });

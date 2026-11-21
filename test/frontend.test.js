@@ -140,7 +140,7 @@ test('frontend reveals check after payment, renders results and restores saved h
   const call = b.calls.at(-1);
   assert.equal(call.url, 'https://node-health-report.vercel.app/api/check');
   assert.equal(call.headers.Authorization, 'Bearer fixture-access-token');
-  assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100 });
+  assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100, paymentId: 'fixture-payment' });
   assert.equal(b.element('check-node').textContent, checkReport.sections.status.line);
   assert.equal(b.element('check-sync').textContent, checkReport.sections.sync.line);
   assert.equal(b.element('check-ports').textContent, checkReport.sections.ports.line);

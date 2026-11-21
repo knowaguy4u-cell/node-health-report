@@ -204,7 +204,8 @@
       const response = await fetch(API_BASE + '/api/check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
-        body: JSON.stringify({ host: hostInput, nodeLedger: ledgerInput === '' ? null : Number(ledgerInput) }),
+        body: JSON.stringify({ host: hostInput, nodeLedger: ledgerInput === '' ? null : Number(ledgerInput),
+          ...(lastPurchasePaymentId ? { paymentId: lastPurchasePaymentId } : {}) }),
       });
       const value = await response.json();
       if (!response.ok) {

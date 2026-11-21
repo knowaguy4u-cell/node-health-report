@@ -117,7 +117,26 @@ function verdicts(ports, networkLedger, nodeLedger = null) {
 
 function createCheck({ pi, ledger, store, network, probe = probePorts, lookup = dns.lookup }) {
   const payments = createPayments({ pi, ledger, store, network });
-  return async ({ accessToken, host, nodeLedger = null }) => {
+  async function hasCompletedPurchase(paymentId, user) {
+    if (typeof paymentId !== 'string' || !paymentId) return false;
+    let purchase;
+    try {
+      purchase = await pi.getPayment(paymentId);
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'pi_request_failed' && error.upstreamStatus === 404) return false;
+      if (error instanceof HttpError && error.status >= 500) throw error;
+      return false;
+    }
+    try {
+      payments.validate(purchase, paymentId, user, 'user_to_app', 1, 'full_health_check');
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status >= 500) throw error;
+      return false;
+    }
+    return Boolean(purchase.status?.developer_completed && purchase.status?.transaction_verified &&
+      purchase.transaction?.verified);
+  }
+  return async ({ accessToken, host, nodeLedger = null, paymentId = null }) => {
     const user = await payments.identify(accessToken);
     let entitled = false;
     if (typeof user.wallet_address === 'string' && user.wallet_address) {
@@ -134,21 +153,12 @@ function createCheck({ pi, ledger, store, network, probe = probePorts, lookup = 
           }
         } catch { continue; }
       }
-    } else {
-      try {
-        const paymentId = await store.get(`user-payment:${user.uid}`);
-        if (typeof paymentId === 'string' && paymentId) {
-          const purchase = await pi.getPayment(paymentId);
-          payments.validate(purchase, paymentId, user, 'user_to_app', 1, 'full_health_check');
-          if (purchase.status?.developer_completed && purchase.status?.transaction_verified &&
-              purchase.transaction?.verified) {
-            entitled = true;
-          }
-        }
-      } catch (error) {
-        if (!(error instanceof HttpError) || error.status >= 500) throw error;
-      }
     }
+    if (!entitled) {
+      const indexedPaymentId = await store.get(`user-payment:${user.uid}`);
+      entitled = await hasCompletedPurchase(indexedPaymentId, user);
+    }
+    if (!entitled) entitled = await hasCompletedPurchase(paymentId, user);
     if (!entitled) throw new HttpError(403, 'no_completed_check');
     const key = `check-at:${user.uid}`;
     try { await store.withLock(key, async () => {

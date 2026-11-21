@@ -18,8 +18,10 @@ function createPiClient({ fetchImpl = (...args) => fetch(...args), env = process
     } catch { throw new HttpError(502, 'pi_unavailable'); }
     // Never propagate upstream text: it can contain credentials or request data.
     if (!response.ok) {
-      throw new HttpError(token && response.status === 401 ? 401 : 502,
+      const error = new HttpError(token && response.status === 401 ? 401 : 502,
         token && response.status === 401 ? 'invalid_access_token' : 'pi_request_failed');
+      error.upstreamStatus = response.status;
+      throw error;
     }
     try { return await response.json(); }
     catch { throw new HttpError(502, 'invalid_pi_response'); }
