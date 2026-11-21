@@ -432,7 +432,8 @@ test('HTTP CORS allows both app origins and preflights without auth', async () =
   assert.equal(rejected.headers['Access-Control-Allow-Origin'], undefined);
 });
 
-for (const origin of ['https://node-health-report.vercel.app', 'https://nodehealthreport3739.pinet.com']) {
+for (const origin of ['https://node-health-report.vercel.app', 'https://nodehealthreport3739.pinet.com',
+  'https://node-health-report-testnet.vercel.app']) {
   test(`HTTP CORS allows POST from ${origin}`, async () => {
     let called = false;
     const res = await call(handler(() => { called = true; return { ok: true }; }), {

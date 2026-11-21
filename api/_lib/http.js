@@ -1,7 +1,7 @@
 'use strict';
 
 const { HttpError } = require('./errors');
-const ORIGINS = new Set(['https://knowaguy4u-cell.github.io', 'https://testjra7998.pinet.com', 'https://node-health-report.vercel.app', 'https://nodehealthreport3739.pinet.com']);
+const ORIGINS = new Set(['https://knowaguy4u-cell.github.io', 'https://testjra7998.pinet.com', 'https://node-health-report.vercel.app', 'https://node-health-report-testnet.vercel.app', 'https://nodehealthreport3739.pinet.com']);
 
 function handler(action) {
   return async (req, res) => {
