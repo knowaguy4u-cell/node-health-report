@@ -108,7 +108,7 @@
   .mono, .num, dd, input[type=number] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
   .fleet-entry dl {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 1px;
     margin: 1.05rem 0;
     background: rgba(148,163,184,.22);
@@ -264,6 +264,7 @@
   #run-form > label { display: block; font-size: .92rem; color: #e6edf7; }
   #run-form > button { margin: .25rem .5rem .25rem 0; }
   #report > h3 { border-top: 1px solid rgba(148,163,184,.22); padding-top: 1.35rem; margin-top: 1.65rem; }
+  #score-value { font-size: 1.55rem; line-height: 1.3; margin: .35rem 0; }
   .status-area { display: flex; flex-direction: column; margin-top: 1.5rem; border-top: 1px solid rgba(148,163,184,.22); }
   .status-banner { order: -1; padding: .85rem 0 .6rem; overflow-wrap: anywhere; }
   details ol { padding-left: 1.35rem; font-size: .9rem; line-height: 1.65; }
@@ -353,8 +354,12 @@
     <ul class="checks">
       <li>Node status <span id="check-node" class="warn">not checked yet</span></li>
       <li>Blockchain sync <span id="check-sync" class="warn">not checked yet</span></li>
-      <li>Ports and connectivity <span id="check-ports" class="warn">not checked yet</span></li>
+      <li>Ports and connectivity <span id="check-ports" class="warn">not checked yet</span> <span class="badge">OUTSIDE-VERIFIED</span></li>
     </ul>
+    <p id="port-truth" class="hint">Measured from outside — what the network sees. Pi's built-in checker often disagrees; the outside check is the one that counts.</p>
+    <p id="healthy-framing" class="hint">Judged by ledger progress against the network — a node can have the Pi app open and still be behind.</p>
+    <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value"></p><p id="score-fix"></p></section>
+    <p id="report-trend" class="hint" hidden></p><p id="report-changes" class="hint" hidden></p>
     <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
     <p><button id="health-check" aria-describedby="check-hint latest-status" disabled>Run full health check — <span class="num">1</span> Test-Pi</button></p>
     <p id="check-hint" class="hint">Sign in above to run your health check.</p>
@@ -443,7 +448,7 @@
     });
     document.getElementById('report-ready').hidden = false;
     updateProgress();
-    if (lastReport) renderCheck(lastReport);
+    if (lastReport) { renderCheck(lastReport); renderReportExtras(lastReport); }
   }
 
   function setHealthWorking(working) {
@@ -490,8 +495,54 @@
   function persistFleet() {
     try { localStorage.setItem(FLEET_KEY, JSON.stringify(fleet)); localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
   }
+  if (lastReport?.sections?.status) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+  }
+  if (lastReport?.sections?.status) renderReportExtras(lastReport);
   function observations(host) { return history.filter(r => r.host === host).sort((a,b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt)); }
   function latestFor(host) { return observations(host).at(-1); }
+  function scoreFor(r) {
+    if (!r || r.syncGap == null || !Number.isFinite(r.syncGap) || !Number.isFinite(r.portsOpen)) return null;
+    const gap = r.syncGap;
+    const sync = gap === 0 ? 50 : gap <= 10 ? 45 : gap <= 1000 ? 30 : gap <= 100000 ? 15 : 0;
+    return { value: r.portsOpen * 5 + sync, ports: r.portsOpen * 5, sync };
+  }
+  function scoreBand(score) { return score >= 90 ? 'Healthy' : score >= 70 ? 'Good' : score >= 40 ? 'Needs a look' : 'At risk'; }
+  function scoreFix(r, score) {
+    if (score.value === 100) return 'Full score — run this check weekly to keep it.';
+    if ((r.fixes || []).length === 1 && /^Nothing to fix/.test(r.fixes[0].title)) return 'Nothing to fix — the remaining points come back as the gap closes.';
+    const portRecover = 50 - score.ports, syncRecover = 50 - score.sync;
+    const usePorts = portRecover >= syncRecover;
+    const fix = (r.fixes || []).find(f => usePorts ? /port/i.test(f.title) : /Let your node catch up|Almost synced/i.test(f.title));
+    return fix ? 'The fix that raises it most: ' + fix.title + ' (+' + Math.max(portRecover, syncRecover) + ').' : 'The report has no matching fix listed.';
+  }
+  function verdictWord(r) { return r.sections.status.level === 'ok' ? 'healthy' : r.sections.status.level === 'bad' ? 'at risk' : 'needs attention'; }
+  function changesFor(host) {
+    const rows = observations(host); if (rows.length < 2) return null;
+    const a = rows.at(-2), b = rows.at(-1), changes = [];
+    if (verdictWord(a) !== verdictWord(b)) changes.push('verdict ' + verdictWord(a) + ' → ' + verdictWord(b));
+    if (a.syncGap !== b.syncGap) changes.push('sync gap ' + (a.syncGap == null ? '—' : a.syncGap) + ' → ' + (b.syncGap == null ? '—' : b.syncGap));
+    if (a.portsOpen !== b.portsOpen) changes.push('ports open ' + a.portsOpen + ' → ' + b.portsOpen + ' of 10');
+    return 'Since your last check: ' + (changes.length ? changes.join('; ') : 'no change.');
+  }
+  function trendFor(host) {
+    const gaps = observations(host).filter(r => Number.isFinite(r.syncGap)).map(r => r.syncGap);
+    if (gaps.length < 2) return null;
+    const shown = gaps.slice(-5), a = shown[0], b = shown.at(-1);
+    return 'Sync gap across your checks: ' + shown.join(' → ') + ' — ' + (b < a ? 'closing' : b > a ? 'growing' : 'steady') + '.';
+  }
+  function renderReportExtras(r) {
+    const score = scoreFor(r), block = document.getElementById('health-score'); block.hidden = false;
+    if (!score) { document.getElementById('score-value').textContent = "Not scored yet — enter your node's current ledger so sync can be measured."; document.getElementById('score-fix').textContent = ''; }
+    else {
+      const band = scoreBand(score.value), cls = band === 'Healthy' ? 'ok' : band === 'Good' || band === 'Needs a look' ? 'warn' : 'bad';
+      renderParts(document.getElementById('score-value'), [[String(score.value), 'num ' + cls], [' of '], ['100', 'num'], [' — ' + band]]);
+      renderWithNums(document.getElementById('score-fix'), scoreFix(r, score));
+    }
+    const trend = trendFor(r.host), changed = changesFor(r.host);
+    const trendEl = document.getElementById('report-trend'); trendEl.hidden = !trend; if (trend) renderWithNums(trendEl, trend);
+    const changeEl = document.getElementById('report-changes'); changeEl.hidden = !changed; if (changed) renderWithNums(changeEl, changed);
+  }
   function stateOf(r) { return !r ? 'NOT CHECKED' : r.portsOpen === 0 ? 'UNREACHABLE' : r.sections.status.level === 'ok' ? 'SYNCED' : 'BEHIND'; }
   function changedAt(host) {
     const rows = observations(host);
@@ -540,7 +591,8 @@
       append(heading, 'span', state, 'pill ' + (state === 'SYNCED' ? 'ok' : state === 'UNREACHABLE' ? 'bad' : state === 'NOT CHECKED' ? 'neutral' : 'warn'));
       append(entry, 'span', node.host, 'hint');
       const stats = append(entry, 'dl', '');
-      for (const [name, value] of [['BLOCK', r?.nodeLedger ?? '—'], ['BEHIND', r?.syncGap ?? '—'], ['PORTS', r?.portsOpen == null ? '—' : r.portsOpen + '/10'], ['LAST SEEN', r ? relative(r.checkedAt) : '—']]) {
+      const score = scoreFor(r);
+      for (const [name, value] of [['BLOCK', r?.nodeLedger ?? '—'], ['BEHIND', r?.syncGap ?? '—'], ['PORTS', r?.portsOpen == null ? '—' : r.portsOpen + '/10'], ['LAST SEEN', r ? relative(r.checkedAt) : '—'], ['SCORE', score ? score.value : '—']]) {
         const cell = append(stats, 'div', ''); append(cell, 'dt', name); append(cell, 'dd', String(value));
       }
       const words = [];
@@ -550,7 +602,10 @@
       const rate = catchupRate(node.host); if (state !== 'SYNCED' && rate > 0) words.push('Catching up at about ' + rate + ' ledgers an hour');
       const changed = changedAt(node.host);
       if (changed) { const d = new Date(changed); words.push('state changed ' + (d.toDateString() === new Date().toDateString() ? 'today' : d.toLocaleDateString()) + ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); }
-      if (words.length) append(entry, 'p', words.join(' · '), state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint');
+      const trend = trendFor(node.host), whatChanged = changesFor(node.host);
+      if (trend) words.push(trend);
+      if (whatChanged) words.push(whatChanged);
+      if (words.length) renderWithNums(append(entry, 'p', '', state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint'), words.join(' · '));
       const remove = append(entry, 'button', 'Remove ' + node.label);
       remove.onclick = () => { fleet = fleet.filter(n => n.host !== node.host); persistFleet(); renderFleet(); };
     }
@@ -635,7 +690,7 @@
         }
         return value.error;
       }
-      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); persistFleet();
+      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); renderReportExtras(value); persistFleet();
       try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
       resultLine.textContent = value.sections.status.line;
     } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; }

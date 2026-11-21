@@ -9,20 +9,21 @@ const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
   const elements = new Map();
+  const makeElement = () => {
+    const el = {
+      hidden: true, disabled: false, children: [],
+      addEventListener(event, callback) { this[event] = callback; },
+      appendChild(child) { this.children.push(child); },
+    };
+    let own = '';
+    Object.defineProperty(el, 'textContent', {
+      get() { return own + this.children.map(child => child.textContent ?? '').join(''); },
+      set(value) { own = String(value); this.children = []; },
+    });
+    return el;
+  };
   const element = id => {
-    if (!elements.has(id)) {
-      const el = {
-        hidden: true, disabled: false, children: [],
-        addEventListener(event, callback) { this[event] = callback; },
-        appendChild(child) { this.children.push(child); },
-      };
-      let own = '';
-      Object.defineProperty(el, 'textContent', {
-        get() { return own + this.children.map(child => child.textContent ?? '').join(''); },
-        set(value) { own = String(value); this.children = []; },
-      });
-      elements.set(id, el);
-    }
+    if (!elements.has(id)) elements.set(id, makeElement());
     return elements.get(id);
   };
   const calls = [];
@@ -41,7 +42,7 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     setItem: (key, value) => storage.set(key, String(value)),
     removeItem: key => storage.delete(key),
   };
-  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: () => ({ children: [], appendChild(child) { this.children.push(child); } }) },
+  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: makeElement },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       if (url.endsWith('/api/check')) {
@@ -348,7 +349,7 @@ test('fleet chooses one highest-priority fix and keeps unobserved cells empty', 
   assert.match(b.element('fixes').children.at(-1).textContent, /^Open ports/);
   const entry = b.element('fleet-list').children.at(-1);
   assert.equal(entry.children[0].children[1].textContent, 'NOT CHECKED');
-  assert.deepEqual(entry.children[2].children.map(cell => cell.children[1].textContent), ['—', '—', '—', '—']);
+  assert.deepEqual(entry.children[2].children.map(cell => cell.children[1].textContent), ['—', '—', '—', '—', '—']);
 });
 
 test('dark tokens carry readable text contrast including tinted panels', () => {
@@ -367,7 +368,7 @@ test('removing the final node stays removed after reload without erasing history
   const report = observed('example.com', '2026-11-20T12:00:00Z', 0, 'ok');
   const storage = new Map([['nhr:lastReport', JSON.stringify(report)]]);
   const b = browser({ storage });
-  b.element('fleet-list').children.at(-1).children.at(-1).onclick();
+  b.element('fleet-list').children.at(-1).children[3].onclick();
   const reloaded = browser({ storage });
   assert.equal(evaluate(reloaded, 'fleet.length'), 0);
   assert.equal(evaluate(reloaded, 'history.length'), 1);
@@ -505,4 +506,111 @@ test('reskin locks single amber fixes highlight, amber test badge, and typograph
   assert.match(style, /\.badge\s*\{[^}]*color:\s*#f59e0b;[^}]*background:\s*rgba\(245,\s*158,\s*11/);
   assert.match(style, /body\s*\{[^}]*"Times New Roman"/);
   assert.match(style, /\.mono,\s*\.num,\s*dd,\s*input\[type=number\]\s*\{[^}]*ui-monospace/);
+});
+test('health score math follows port and sync bands and omits null gaps', () => {
+  const b = browser();
+  const calc = report => evaluate(b, 'scoreFor(' + JSON.stringify(report) + ')');
+  assert.equal(calc(observed('a', '2026-11-20T12:00:00Z', 0, 'ok')).value, 100);
+  assert.equal(calc(observed('a', '2026-11-20T12:00:00Z', 0, 'ok', 8)).value, 90);
+  for (const [gap, sync] of [[0,50],[1,45],[10,45],[11,30],[1000,30],[1001,15],[100000,15],[100001,0]]) {
+    assert.equal(calc(observed('a', '2026-11-20T12:00:00Z', gap)).sync, sync, 'gap ' + gap);
+  }
+  assert.equal(calc(observed('a', '2026-11-20T12:00:00Z', null)), null);
+});
+
+test('health score lever selects ports when one open port is the larger loss', () => {
+  const b = browser();
+  const r = observed('a', '2026-11-20T12:00:00Z', 2000, 'warn', 1);
+  r.fixes = [{ title: 'Let your node catch up', why: '', how: '' }, { title: 'Restore port access', why: '', how: '' }];
+  assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(r) + ', scoreFor(' + JSON.stringify(r) + '))'), 'The fix that raises it most: Restore port access (+45).');
+});
+
+test('report score block renders score band, fix, null-gap copy and report framing', () => {
+  const r = observed('a.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  r.fixes = [{ title: 'Almost synced', why: '', how: '' }];
+  const b = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(r)]]) });
+  assert.equal(b.element('health-score').hidden, false);
+  assert.equal(b.element('score-value').textContent, '100 of 100 — Healthy');
+  assert.match(b.element('score-fix').textContent, /Full score/);
+  const unscored = observed('a.example', '2026-11-20T12:00:00Z', null);
+  const c = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(unscored)]]) });
+  assert.match(c.element('score-value').textContent, /Not scored yet — enter your node's current ledger/);
+  assert.match(html, /Measured from outside — what the network sees/);
+  assert.match(html, /OUTSIDE-VERIFIED/);
+  assert.match(html, /Judged by ledger progress against the network/);
+});
+
+test('fleet score cell shows computed score or em dash', () => {
+  const r = observed('a.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([['nhr:fleet', JSON.stringify([{host:r.host,label:'A'}])],['nhr:history',JSON.stringify([r])]]) });
+  const stats = b.element('fleet-list').children[0].children[2].children.map(c => c.children[1].textContent);
+  assert.deepEqual(stats.slice(0,3), ['1000','0','10/10']);
+  assert.match(stats[3], /^(seconds|\d+ min)$/); assert.equal(stats[4], '100');
+  const noGap = observed('b.example', '2026-11-20T12:00:00Z', null);
+  const c = browser({ storage: new Map([['nhr:fleet', JSON.stringify([{host:noGap.host,label:'B'}])],['nhr:history',JSON.stringify([noGap])]]) });
+  assert.equal(c.element('fleet-list').children[0].children[2].children[4].children[1].textContent, '—');
+});
+
+test('trend uses measured stored gaps only, caps at five, labels checks and reports direction', () => {
+  const b = browser();
+  for (const [gaps, expected] of [[[100,50],'closing'],[[50,100],'growing'],[[50,50],'steady']]) {
+    evaluate(b, 'history = ' + JSON.stringify(gaps.map((g,i) => observed('a','2026-11-20T0'+i+':00:00Z',g))));
+    const value = evaluate(b, "trendFor('a')");
+    assert.match(value, /across your checks/); assert.match(value, new RegExp(expected));
+  }
+  evaluate(b, 'history = ' + JSON.stringify([1,2,3,4,5,6].map((g,i) => observed('a','2026-11-20T0'+i+':00:00Z',g))));
+  assert.equal(evaluate(b, "trendFor('a')").match(/\d+/g).length, 5);
+  evaluate(b, 'history = ' + JSON.stringify([observed('a','2026-11-20T00:00:00Z',2), observed('a','2026-11-20T01:00:00Z',null)]));
+  assert.equal(evaluate(b, "trendFor('a')"), null);
+});
+
+test('what changed uses real report transitions and omits single observations', () => {
+  const b = browser();
+  const a = observed('a','2026-11-20T10:00:00Z',100,'ok',10), z = observed('a','2026-11-20T11:00:00Z',200,'bad',8);
+  evaluate(b, 'history = ' + JSON.stringify([a,z]));
+  const text = evaluate(b, "changesFor('a')");
+  assert.match(text, /verdict healthy → at risk/); assert.match(text, /sync gap 100 → 200/); assert.match(text, /ports open 10 → 8 of 10/);
+  evaluate(b, 'history = ' + JSON.stringify([a,{...a, checkedAt:"2026-11-20T11:00:00Z"}]));
+  assert.equal(evaluate(b, "changesFor('a')"), 'Since your last check: no change.');
+  evaluate(b, 'history = ' + JSON.stringify([a])); assert.equal(evaluate(b, "changesFor('a')"), null);
+});
+test('saved report renders score extras on load without breaking history migration', () => {
+  const a = observed('a.example', '2026-11-20T10:00:00Z', 100, 'warn', 8);
+  const z = observed('a.example', '2026-11-20T11:00:00Z', 0, 'ok', 10);
+  const storage = new Map([['nhr:lastReport', JSON.stringify(z)], ['nhr:history', JSON.stringify([a, z])]]);
+  const b = browser({ storage });
+  assert.equal(JSON.parse(storage.get('nhr:history')).length, 2);
+  assert.equal(b.element('health-score').hidden, false);
+  assert.equal(b.element('score-value').textContent, '100 of 100 — Healthy');
+  assert.match(b.element('report-trend').textContent, /Sync gap across your checks: 100 → 0 — closing\./);
+  assert.match(b.element('report-changes').textContent, /Since your last check: verdict needs attention → healthy; sync gap 100 → 0; ports open 8 → 10 of 10/);
+});
+
+test('outside-verified badge sits outside the dynamic ports span', () => {
+  assert.match(html, /id="check-ports"[^<]*<\/span> <span class="badge">OUTSIDE-VERIFIED<\/span>/);
+});
+
+test('score fix line handles the nothing-to-fix report below full score', () => {
+  const b = browser();
+  const r = observed('a', '2026-11-20T12:00:00Z', 5, 'ok', 10);
+  r.fixes = [{ title: 'Nothing to fix — run this check weekly', why: '', how: '' }];
+  assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(r) + ', scoreFor(' + JSON.stringify(r) + '))'), 'Nothing to fix — the remaining points come back as the gap closes.');
+});
+
+test('trend direction reads the shown series from first to last', () => {
+  const b = browser();
+  evaluate(b, 'history = ' + JSON.stringify([1, 50, 40, 30, 20, 25].map((g, i) => observed('a', '2026-11-20T0' + i + ':00:00Z', g))));
+  assert.match(evaluate(b, "trendFor('a')"), /50 → 40 → 30 → 20 → 25 — closing\./);
+});
+test('score value and fleet trend numbers render in monospace spans', () => {
+  const r = observed('a.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([['nhr:lastReport', JSON.stringify(r)]]) });
+  assert.deepEqual(b.element('score-value').children.filter(c => (c.className || '').includes('num')).map(c => c.textContent), ['100', '100']);
+  const a = observed('h.example', '2026-11-20T10:00:00Z', 100, 'warn', 8);
+  const z = observed('h.example', '2026-11-20T11:00:00Z', 0, 'ok', 10);
+  const c = browser({ storage: new Map([['nhr:fleet', JSON.stringify([{ host: 'h.example', label: 'H' }])], ['nhr:history', JSON.stringify([a, z])]]) });
+  const words = c.element('fleet-list').children[0].children[3];
+  assert.match(words.textContent, /across your checks/);
+  const nums = words.children.filter(x => x.className === 'num').map(x => x.textContent);
+  assert.ok(nums.includes('100') && nums.includes('0'), 'trend numbers are .num spans: ' + nums.join(','));
 });
