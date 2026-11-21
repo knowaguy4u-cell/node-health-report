@@ -338,6 +338,7 @@
     <h1 id="fleet-verdict" class="verdict-empty"><span class="num">0</span> nodes watched. <span class="num">0</span> need attention.</h1>
     <p class="hint">This view refreshes stored states when opened. Checks run here while this page is open.</p>
     <p id="fleet-strip" aria-live="polite"></p>
+    <p id="storage-repaired" class="hint" hidden></p>
     <div id="fleet-filters" role="group" aria-label="Filter fleet"></div>
     <div id="fleet-list" aria-live="polite"></div>
     <button id="check-all">Check all</button>
@@ -371,7 +372,7 @@
     </ul>
     <p id="port-truth" class="hint">Measured from outside — what the network sees. Pi's built-in checker often disagrees; the outside check is the one that counts.</p>
     <p id="healthy-framing" class="hint">Judged by ledger progress against the network — a node can have the Pi app open and still be behind.</p>
-    <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value"></p><div id="score-breakdown" class="score-breakdown" hidden></div><p id="score-freshness" hidden></p><p id="report-best" hidden></p><p id="score-fix"></p></section>
+    <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value" aria-describedby="score-freshness"></p><div id="score-breakdown" class="score-breakdown" hidden></div><p id="score-freshness" hidden></p><p id="report-best" hidden></p><p id="score-fix"></p></section>
     <p id="report-trend" class="hint" hidden></p><p id="report-changes" class="hint" hidden></p>
     <p id="network-stall" class="hint" hidden></p><p id="testnet2-ports" class="hint" hidden></p>
     <p><button id="share-card" type="button" disabled>Share report card</button> <button id="proof-download" type="button" disabled>Download proof of check</button></p>
@@ -411,7 +412,7 @@
     <p class="hint" id="sample-meta">Example check · protocol <span class="num">20</span> · sync gap <span class="num">3</span> blocks</p>
     <ul class="checks">
       <li>Node status <span class="ok">Node is healthy</span></li>
-      <li>Blockchain sync <span class="ok">3 blocks behind the network</span></li>
+      <li>Blockchain sync <span class="ok"><span class="num">3</span> blocks behind the network</span></li>
       <li>Ports and connectivity <span class="ok">All <span class="num">10</span> ports <span class="num">31400–31409</span> are open</span> <span class="badge">OUTSIDE-VERIFIED</span></li>
     </ul>
     <p class="hint">Measured from outside — what the network sees. Pi's built-in checker often disagrees; the outside check is the one that counts.</p>
@@ -518,30 +519,72 @@
     renderWithNums(document.getElementById('report-history'), 'Last check: ' + value.checkedAt + ' — ' + value.host + '. ' + value.sections.status.line);
   }
 
-  try {
-    const saved = JSON.parse(localStorage.getItem(REPORT_KEY));
-    renderCheck(saved);
-    lastReport = saved;
-  } catch {}
-
+  let storageRepaired = false;
+  const normalizeHost = host => host.trim().toLowerCase().replace(/\.$/, '');
+  function sanitizeReport(r, now = Date.now()) {
+    const drop = () => { storageRepaired = true; return null; };
+    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.host !== 'string' || !normalizeHost(r.host) || !r.sections?.status || !Number.isFinite(Date.parse(r.checkedAt)) || Date.parse(r.checkedAt) > now + 300000) return drop();
+    const clean = { ...r, host: normalizeHost(r.host), sections: { ...r.sections } };
+    clean.fixes = Array.isArray(r.fixes) ? r.fixes.filter(f => f && typeof f === 'object' && typeof f.title === 'string') : [];
+    for (const key of ['sync', 'ports']) {
+      const section = clean.sections[key];
+      if (!section || typeof section !== 'object' || typeof section.line !== 'string' || typeof section.level !== 'string') clean.sections[key] = { level: '', line: 'Unknown' };
+    }
+    if (Array.isArray(r.ports)) {
+      const ports = new Map(), conflicts = new Set();
+      for (const row of r.ports) {
+        if (!row || !Number.isInteger(row.port) || row.port < 31400 || row.port > 31409 || typeof row.open !== 'boolean') continue;
+        if (ports.has(row.port) && ports.get(row.port).open !== row.open) conflicts.add(row.port);
+        else ports.set(row.port, row);
+      }
+      clean.ports = [...ports.values()].filter(row => !conflicts.has(row.port));
+    }
+    if ('syncGap' in r && (!Number.isInteger(r.syncGap) || r.syncGap < 0)) clean.syncGap = null;
+    if ('portsOpen' in r && (!Number.isInteger(r.portsOpen) || r.portsOpen < 0 || r.portsOpen > 10)) clean.portsOpen = null;
+    if (JSON.stringify(clean) !== JSON.stringify(r)) storageRepaired = true;
+    return clean;
+  }
   const FLEET_KEY = 'nhr:fleet';
   const HISTORY_KEY = 'nhr:history';
   const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
   const CHECK_ALL_KEY = 'nhr:lastCheckAll';
   let fleetFilter = 'all';
-  let checkAllPending = null;
+  let lastStripText = null;
+  let freshnessTimer = null;
+  let activeRun = null;
   function readStored(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
   }
-  let lastCheckAll = readStored(CHECK_ALL_KEY, null);
-  if (typeof lastCheckAll !== 'string' || !Number.isFinite(Date.parse(lastCheckAll))) lastCheckAll = null;
-  let fleet = readStored(FLEET_KEY, []);
-  if (!Array.isArray(fleet)) fleet = [];
-  fleet = fleet.filter(n => n && typeof n.host === 'string' && typeof n.label === 'string');
   let history = readStored(HISTORY_KEY, []);
-  if (!Array.isArray(history)) history = [];
-  history = history.filter(r => r && typeof r.host === 'string' && r.sections?.status && Array.isArray(r.fixes) && Number.isFinite(Date.parse(r.checkedAt)));
+  if (!Array.isArray(history)) { history = []; storageRepaired = true; }
+  const uniqueReports = new Map();
+  for (const raw of history) {
+    const r = sanitizeReport(raw); if (!r) continue;
+    const key = JSON.stringify([r.host, r.checkedAt]);
+    if (uniqueReports.has(key)) { uniqueReports.delete(key); storageRepaired = true; }
+    uniqueReports.set(key, r);
+  }
+  history = [...uniqueReports.values()];
+  try {
+    const saved = JSON.parse(localStorage.getItem(REPORT_KEY));
+    if (saved !== null) lastReport = sanitizeReport(saved);
+    if (lastReport) renderCheck(lastReport);
+  } catch {}
+
   if (lastReport?.sections?.status && !history.some(r => r.host === lastReport.host && r.checkedAt === lastReport.checkedAt)) history.push(lastReport);
+  let fleet = readStored(FLEET_KEY, []);
+  if (!Array.isArray(fleet)) { fleet = []; storageRepaired = true; }
+  const seenHosts = new Set();
+  fleet = fleet.filter(n => {
+    if (!n || typeof n.host !== 'string' || !normalizeHost(n.host) || seenHosts.has(normalizeHost(n.host))) { storageRepaired = true; return false; }
+    seenHosts.add(normalizeHost(n.host)); return true;
+  }).map(n => {
+    const clean = { ...n, host: normalizeHost(n.host), label: typeof n.label === 'string' ? n.label : normalizeHost(n.host) };
+    if (JSON.stringify(clean) !== JSON.stringify(n)) storageRepaired = true;
+    return clean;
+  });
+  let lastCheckAll = readStored(CHECK_ALL_KEY, null);
+  if (lastCheckAll !== null && (typeof lastCheckAll !== 'string' || !Number.isFinite(Date.parse(lastCheckAll)) || Date.parse(lastCheckAll) > Date.now() + 300000)) { lastCheckAll = null; storageRepaired = true; }
   if (localStorageAvailableFleetMissing() && lastReport?.host) fleet.push({ host: lastReport.host, label: lastReport.host });
   function localStorageAvailableFleetMissing() {
     try { return localStorage.getItem(FLEET_KEY) === null; } catch { return !fleet.length; }
@@ -550,14 +593,11 @@
   function persistFleet() {
     try { localStorage.setItem(FLEET_KEY, JSON.stringify(fleet)); localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
   }
-  if (lastReport?.sections?.status) {
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
-  }
   if (lastReport?.sections?.status) renderReportExtras(lastReport);
   function observations(host) { return history.filter(r => r.host === host).sort((a,b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt)); }
   function latestFor(host) { return observations(host).at(-1); }
   function scoreFor(r) {
-    if (!r || r.syncGap == null || !Number.isFinite(r.syncGap) || !Number.isFinite(r.portsOpen)) return null;
+    if (!r || !Number.isInteger(r.syncGap) || r.syncGap < 0 || !Number.isInteger(r.portsOpen) || r.portsOpen < 0 || r.portsOpen > 10) return null;
     const gap = r.syncGap;
     const sync = gap === 0 ? 50 : gap <= 10 ? 45 : gap <= 1000 ? 30 : gap <= 100000 ? 15 : 0;
     return { value: r.portsOpen * 5 + sync, ports: r.portsOpen * 5, sync };
@@ -565,10 +605,10 @@
   function bestFor(host) {
     const scored = observations(host).filter(r => scoreFor(r));
     if (scored.length < 2) return null;
-    const best = scored.reduce((a, b) => scoreFor(b).value > scoreFor(a).value ? b : a);
+    const best = scored.reduce((a, b) => scoreFor(b).value >= scoreFor(a).value ? b : a);
     const date = new Date(best.checkedAt);
     if (!Number.isFinite(date.getTime())) return null;
-    return 'Best so far: ' + scoreFor(best).value + ' · ' + date.getUTCDate() + ' ' + date.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' });
+    return 'Best so far: ' + scoreFor(best).value + ' · ' + date.getUTCDate() + ' ' + date.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' }) + (date.getUTCFullYear() !== new Date().getUTCFullYear() ? ' ' + date.getUTCFullYear() : '');
   }
   function fleetHealth(r) {
     const score = scoreFor(r);
@@ -576,9 +616,9 @@
   }
   function fleetOrder(nodes) {
     return nodes.slice().sort((a, b) => {
-      const ar = latestFor(a.host), br = latestFor(b.host);
-      if (!ar || !br) return Number(!ar) - Number(!br);
-      return (scoreFor(ar)?.value ?? Infinity) - (scoreFor(br)?.value ?? Infinity);
+      const rank = r => !r ? [2, 0] : scoreFor(r) ? [0, scoreFor(r).value] : [1, 0];
+      const ar = rank(latestFor(a.host)), br = rank(latestFor(b.host));
+      return ar[0] - br[0] || ar[1] - br[1] || a.host.localeCompare(b.host);
     });
   }
   function staleAge(r, now = Date.now()) {
@@ -587,13 +627,23 @@
     const days = Math.floor(elapsed / 86400000);
     return 'checked ' + days + (days === 1 ? ' day ago' : ' days ago');
   }
-  function completeCheckAll(host) {
-    if (!checkAllPending) return;
-    checkAllPending.delete(host);
-    if (checkAllPending.size) return;
-    lastCheckAll = new Date().toISOString();
-    try { localStorage.setItem(CHECK_ALL_KEY, JSON.stringify(lastCheckAll)); } catch {}
-    checkAllPending = null;
+  function finishRun(run) {
+    if (!run || run !== activeRun || run.pending.size) return;
+    if (run.failed === 0) {
+      lastCheckAll = new Date().toISOString();
+      try { localStorage.setItem(CHECK_ALL_KEY, JSON.stringify(lastCheckAll)); } catch {}
+      document.getElementById('fleet-progress').textContent = 'Fleet checks finished. Queued checks run while this page stays open.';
+    } else if (run.done > 0) {
+      document.getElementById('fleet-progress').textContent = 'Checked ' + run.done + ' of ' + run.hosts.size + ' nodes — the rest could not be measured this time.';
+    } else {
+      document.getElementById('fleet-progress').textContent = 'The checks could not be completed — ' + run.reason;
+    }
+    activeRun = null;
+  }
+  function completeCheckAll(host, run, reason = null) {
+    if (!run || run !== activeRun || !run.pending.delete(host)) return;
+    if (reason) { run.failed++; run.reason = reason; } else run.done++;
+    finishRun(run);
   }
   function scoreBand(score) { return score >= 90 ? 'Healthy' : score >= 70 ? 'Good' : score >= 40 ? 'Needs a look' : 'At risk'; }
   function scoreFix(r, score) {
@@ -626,9 +676,9 @@
     const ports = (Array.isArray(r.ports) ? r.ports : []).filter(p => p.open).map(p => p.port);
     const portLine = ports.length > 0 && ports.every(p => p >= 31401 && p <= 31403)
       ? (ports.length === 3 ? 'All three ports the current Pi software publishes are open from outside.' : 'Outside check found ' + ports.join(', ') + ' open — the range the current Pi software publishes.')
-      : r.sections.ports.line;
+      : r.sections?.ports?.line ?? 'Unknown';
     return ['Node Health Report', verdict, ...(score ? ['Health score: ' + score.value + ' — ' + scoreBand(score.value)] : []), 'Host: ' + r.host, 'Ports: ' + portLine,
-      'Sync: ' + r.sections.sync.line, 'Checked: ' + new Date(r.checkedAt).toLocaleString(), 'nodehealthreport3739.pinet.com'];
+      'Sync: ' + (r.sections?.sync?.line ?? 'Unknown'), 'Checked: ' + new Date(r.checkedAt).toLocaleString(), 'nodehealthreport3739.pinet.com'];
   }
   function proofText(r) {
     const date = new Date(r.checkedAt), measured = r.syncGap != null;
@@ -639,7 +689,7 @@
       'Check time: ' + r.checkedAt + ' (' + date.toLocaleString() + ')', 'Measured from outside — what the network sees.', ...ports,
       'Network ledger: ' + (r.networkLedger ?? 'not provided'), 'Node ledger: ' + (r.nodeLedger ?? 'not provided'),
       'Sync gap: ' + (measured ? r.syncGap : 'not measured'), ...(r.currentProtocolVersion == null ? [] : ['Network protocol version: ' + r.currentProtocolVersion]),
-      'Status: ' + r.sections.status.line, 'Sync: ' + r.sections.sync.line, 'Ports: ' + r.sections.ports.line,
+      'Status: ' + r.sections.status.line, 'Sync: ' + (r.sections?.sync?.line ?? 'Unknown'), 'Ports: ' + (r.sections?.ports?.line ?? 'Unknown'),
       score ? 'Health score: ' + score.value + ' — ' + scoreBand(score.value) : 'Health score: not scored — no node ledger was entered for this check',
       'Generated by Node Health Report from an outside check. A snapshot of the moment above — not a promise about any other moment.'].join('\n');
   }
@@ -679,6 +729,7 @@
       renderWithNums(append(breakdown, 'p', ''), 'Sync — ' + r.syncGap + ' blocks behind the network · ' + score.sync + ' points');
       renderWithNums(document.getElementById('score-fix'), scoreFix(r, score));
     }
+    scheduleFreshness(r);
     const trend = trendFor(r.host), changed = changesFor(r.host);
     const trendEl = document.getElementById('report-trend'); trendEl.hidden = !trend; if (trend) renderWithNums(trendEl, trend);
     const changeEl = document.getElementById('report-changes'); changeEl.hidden = !changed; if (changed) renderWithNums(changeEl, changed);
@@ -739,8 +790,8 @@
   let checkingAll = false;
   // View-only filter state lives with the fleet constants above; nothing stored.
   function visibleFleet() {
-    if (fleetFilter === 'all') return fleet;
-    return fleet.filter(node => fleetHealth(latestFor(node.host)) === fleetFilter);
+    if (fleetFilter === 'all') return fleetOrder(fleet);
+    return fleetOrder(fleet).filter(node => fleetHealth(latestFor(node.host)) === fleetFilter);
   }
   function setFleetFilter(filter) {
     fleetFilter = filter === 'healthy' || filter === 'attention' ? filter : 'all';
@@ -752,12 +803,18 @@
     document.getElementById('node-host')?.focus?.();
   }
   function renderFleet() {
+    const repairHint = document.getElementById('storage-repaired');
+    repairHint.hidden = !storageRepaired;
+    repairHint.textContent = storageRepaired ? "Some saved checks from an older version couldn't be read and were tidied up." : '';
     const list = document.getElementById('fleet-list'); list.textContent = '';
     const nodes = visibleFleet();
     const reports = fleet.map(n => latestFor(n.host)).filter(Boolean);
     const attention = fleet.filter(n => fleetHealth(latestFor(n.host)) === 'attention').length;
     const healthy = fleet.length - attention;
-    renderWithNums(document.getElementById('fleet-strip'), fleet.length + ' watched · ' + healthy + ' healthy · ' + attention + ' needs a look' + (lastCheckAll ? ' · last check-all ' + new Date(lastCheckAll).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''));
+    const stamp = lastCheckAll ? new Date(lastCheckAll) : null;
+    const stampCopy = stamp ? ' · last check-all ' + stamp.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }) + (stamp.toDateString() === new Date().toDateString() ? '' : ' · ' + stamp.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })) : '';
+    const stripText = fleet.length + ' watched · ' + healthy + ' healthy · ' + attention + (attention === 1 ? ' needs a look' : ' need a look') + stampCopy;
+    if (stripText !== lastStripText) { renderWithNums(document.getElementById('fleet-strip'), stripText); lastStripText = stripText; }
     const filters = document.getElementById('fleet-filters'); filters.textContent = '';
     for (const [key, label, count] of [['all', 'All', fleet.length], ['attention', 'Needs attention', attention], ['healthy', 'Healthy', healthy]]) {
       const chip = append(filters, 'button', ''); renderWithNums(chip, label + ' ' + count);
@@ -783,7 +840,7 @@
       clear.type = 'button';
       clear.onclick = () => setFleetFilter('all');
     }
-    for (const node of fleetOrder(fleet).filter(n => fleetFilter === 'all' || fleetHealth(latestFor(n.host)) === fleetFilter)) {
+    for (const node of nodes) {
       const r = latestFor(node.host), state = progress.get(node.host) || stateOf(r);
       const entry = append(list, 'article', '', 'fleet-entry');
       const heading = append(entry, 'div', '', 'entry-heading'); append(heading, 'strong', node.label);
@@ -793,10 +850,11 @@
       const score = scoreFor(r);
       for (const [name, value] of [['BLOCK', r?.nodeLedger ?? '—'], ['BEHIND', r?.syncGap ?? '—'], ['PORTS', r?.portsOpen == null ? '—' : r.portsOpen + '/10'], ['LAST SEEN', r ? relative(r.checkedAt) : '—'], ['SCORE', score ? score.value : '—']]) {
         const cell = append(stats, 'div', ''); append(cell, 'dt', name); const digits = append(cell, 'dd', String(value));
-        if (name === 'SCORE' && score && staleAge(r)) digits.className = 'stale-score';
+        if (name === 'SCORE' && score && staleAge(r)) { digits.className = 'stale-score'; digits.ariaLabel = score.value + ', stale, ' + staleAge(r); }
       }
       const words = [];
       if (!r) words.push('Not checked yet');
+      if (r && !scoreFor(r) && observations(node.host).some(row => scoreFor(row))) words.push('Sync unmeasured on the latest check');
       const age = staleAge(r); if (age) words.push('STALE · ' + age);
       if (state === 'CHECK QUEUED') words.push(queueCopy(node.host));
       else if (state === 'CHECKING') words.push('Checking this node…');
@@ -810,7 +868,7 @@
       if (words.length) renderWithNums(append(entry, 'p', '', state === 'CHECK QUEUED' ? 'hint queue-note' : 'hint'), words.join(' · '));
       const best = bestFor(node.host); if (best) renderWithNums(append(entry, 'p', '', 'hint'), best);
       const remove = append(entry, 'button', 'Remove ' + node.label);
-      remove.onclick = () => { fleet = fleet.filter(n => n.host !== node.host); persistFleet(); renderFleet(); };
+      remove.onclick = () => { fleet = fleet.filter(n => n.host !== node.host); if (activeRun) { activeRun.pending.delete(node.host); finishRun(activeRun); } persistFleet(); renderFleet(); };
     }
     const historyList = document.getElementById('fleet-history'); historyList.textContent = '';
     for (const r of history.slice().reverse()) append(historyList, 'li', r.checkedAt + ' · ' + r.host + ' · ' + r.sections.status.line);
@@ -831,9 +889,26 @@
     if (ranked.length) { const f = ranked[0].fix; append(fixes, 'li', f.title + '. ' + f.why + ' ' + f.how); }
     document.getElementById('fixes-panel').hidden = !ranked.length;
     document.getElementById('check-all').disabled = checkingAll || !fleet.length;
+    scheduleFreshness();
   }
+  function refreshFreshness() {
+    renderFleet();
+    if (lastReport && !document.getElementById('report').hidden) renderReportExtras(lastReport);
+  }
+  function scheduleFreshness(report = lastReport) {
+    if (freshnessTimer !== null && typeof clearTimeout === 'function') clearTimeout(freshnessTimer);
+    freshnessTimer = null;
+    if (typeof setTimeout !== 'function') return;
+    const reports = visibleFleet().map(n => latestFor(n.host));
+    if (report && !document.getElementById('report').hidden) reports.push(report);
+    const now = Date.now();
+    const delays = reports.filter(Boolean).map(r => Date.parse(r.checkedAt) + STALE_AFTER_MS - now).filter(delay => delay >= 0 && delay <= STALE_AFTER_MS);
+    if (delays.length) freshnessTimer = setTimeout(refreshFreshness, Math.min(...delays) + 50);
+  }
+  document.addEventListener?.('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFreshness(); });
+  if (typeof window !== 'undefined') window.addEventListener('focus', refreshFreshness);
   function addNode() {
-    const host = document.getElementById('node-host').value.trim().toLowerCase();
+    const host = normalizeHost(document.getElementById('node-host').value);
     if (!host || /[\s/@?#]/.test(host)) return null;
     const label = (document.getElementById('node-label').value || '').trim() || host;
     let node = fleet.find(n => n.host === host);
@@ -851,7 +926,7 @@
     const position = Math.max(1, Array.from(queuedTimers.keys()).indexOf(host) + 1);
     return 'Queue position ' + position + ' — about ' + position + (position === 1 ? ' minute' : ' minutes') + '. Keep this page open.';
   }
-  function checkNode(node, nodeLedger = null, pacing = null) {
+  function checkNode(node, nodeLedger = null, pacing = null, run = null) {
     const task = checkChain.then(async () => {
       if (pacing) {
         const wait = nextAttemptAt - Date.now();
@@ -861,12 +936,12 @@
         }
         if (pacing.label) document.getElementById('fleet-progress').textContent = pacing.label;
       }
-      return performCheck(node, nodeLedger);
+      return performCheck(node, nodeLedger, run);
     });
     checkChain = task.catch(() => {});
     return task;
   }
-  async function performCheck(node, nodeLedger = null) {
+  async function performCheck(node, nodeLedger = null, run = null) {
     progress.set(node.host, 'CHECKING'); renderFleet();
     const resultLine = document.getElementById('check-result');
     try {
@@ -877,27 +952,28 @@
         body: JSON.stringify({ host: node.host, nodeLedger, ...(lastPurchasePaymentId ? { paymentId: lastPurchasePaymentId } : {}) }),
       });
       nextAttemptAt = Date.now() + 61000;
-      const value = await response.json();
+      const raw = await response.json();
+      const value = response.ok ? (sanitizeReport(raw) || raw) : raw;
       if (!response.ok) {
         if (value.error === 'check_too_frequent') {
           progress.set(node.host, 'CHECK QUEUED');
           if (typeof setTimeout === 'function' && !queuedTimers.has(node.host)) queuedTimers.set(node.host, setTimeout(async () => {
             queuedTimers.delete(node.host);
-            if (fleet.some(n => n.host === node.host)) await checkNode(node, nodeLedger, {});
+            if (fleet.some(n => n.host === node.host)) await checkNode(node, nodeLedger, {}, run);
           }, 61000 * (queuedTimers.size + 1)));
           resultLine.textContent = 'CHECK QUEUED: ' + queueCopy(node.host);
         } else {
-          checkAllPending = null;
           progress.delete(node.host);
           const errors = { no_completed_check: 'Buy the full health check first — it is 1 Test-Pi', invalid_host: 'Enter a valid public hostname or IP address for your node.', invalid_nodeLedger: 'Enter a whole, non-negative ledger number.', horizon_unavailable: 'Pi network data is temporarily unavailable. Please try again in a moment.', invalid_horizon_response: 'Pi network data is temporarily unavailable. Please try again in a moment.', horizon_request_failed: 'Pi network data is temporarily unavailable. Please try again in a moment.' };
           resultLine.textContent = errors[value.error] || 'We could not run your check. Please try again.';
+          completeCheckAll(node.host, run, resultLine.textContent);
         }
         return value.error;
       }
-      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeCheckAll(node.host); renderReportExtras(value); persistFleet();
+      progress.delete(node.host); renderCheck(value); lastReport = value; history.push(value); completeCheckAll(node.host, run); renderReportExtras(value); persistFleet();
       try { localStorage.setItem(REPORT_KEY, JSON.stringify(value)); } catch {}
       resultLine.textContent = value.sections.status.line;
-    } catch { checkAllPending = null; progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; }
+    } catch { progress.delete(node.host); resultLine.textContent = 'We could not connect to run your check. Check your connection and try again.'; completeCheckAll(node.host, run, resultLine.textContent); }
     finally { renderFleet(); }
   }
   document.getElementById('run-form').addEventListener('submit', async event => {
@@ -909,18 +985,25 @@
   });
   document.getElementById('check-all').addEventListener('click', async () => {
     const button = document.getElementById('check-all'); checkingAll = true; button.disabled = true;
-    checkAllPending = new Set(fleet.map(n => n.host));
+    const snapshot = fleet.slice();
+    const run = { hosts: new Set(snapshot.map(n => n.host)), pending: new Set(snapshot.map(n => n.host)), done: 0, failed: 0 };
+    activeRun = run;
     try {
-      for (const [index, node] of fleet.slice().entries()) {
-        const label = 'Checking ' + (index + 1) + ' of ' + fleet.length + ': ' + node.label;
+      for (const [index, node] of snapshot.entries()) {
+        if (!run.pending.has(node.host)) continue;
+        const label = 'Checking ' + (index + 1) + ' of ' + snapshot.length + ': ' + node.label;
         // A prior manual ledger is not a fresh observation. Never reuse it.
-        const error = await checkNode(node, null, { label });
+        const error = await checkNode(node, null, { label }, run);
         if (['missing_access_token', 'invalid_access_token', 'no_completed_check'].includes(error)) {
-          document.getElementById('fleet-progress').textContent = document.getElementById('check-result').textContent;
+          if (activeRun === run) {
+            run.failed += run.pending.size; run.pending.clear();
+            finishRun(run);
+          }
           return;
         }
       }
-      document.getElementById('fleet-progress').textContent = 'Fleet checks finished. Queued checks run while this page stays open.';
+      if (activeRun === run && run.pending.size) document.getElementById('fleet-progress').textContent = 'Fleet checks finished. Queued checks run while this page stays open.';
+      finishRun(run);
     } finally { checkingAll = false; renderFleet(); }
   });
   persistFleet(); renderFleet();
