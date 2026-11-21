@@ -10,11 +10,19 @@ const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
   const elements = new Map();
   const element = id => {
-    if (!elements.has(id)) elements.set(id, {
-      hidden: true, disabled: false, textContent: '', children: [],
-      addEventListener(event, callback) { this[event] = callback; },
-      appendChild(child) { this.children.push(child); },
-    });
+    if (!elements.has(id)) {
+      const el = {
+        hidden: true, disabled: false, children: [],
+        addEventListener(event, callback) { this[event] = callback; },
+        appendChild(child) { this.children.push(child); },
+      };
+      let own = '';
+      Object.defineProperty(el, 'textContent', {
+        get() { return own + this.children.map(child => child.textContent ?? '').join(''); },
+        set(value) { own = String(value); this.children = []; },
+      });
+      elements.set(id, el);
+    }
     return elements.get(id);
   };
   const calls = [];

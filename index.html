@@ -21,7 +21,8 @@
   .pill.warn, .badge { color: #f59e0b; background: rgba(245,158,11,.09); }
   .pill.bad { background: rgba(248,113,113,.10); }
   .pill.neutral { color: #94a3b8; background: rgba(148,163,184,.09); }
-  .mono, dd, input[type=number] { font-family: "Times New Roman", Times, serif; }
+  .mono, dd, input[type=number] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem; }
   dd { margin: .3rem 0; overflow-wrap: anywhere; } dt { letter-spacing: .08em; }
   button { min-height: 44px; padding: .7rem 1rem; border: 1px solid #94a3b8; background: transparent; color: #e6edf7; font: inherit; cursor: pointer; }
@@ -57,9 +58,9 @@
   <p id="network-note" hidden></p>
   <p class="badge">Test mode — Test-Pi is test money with no real value.</p>
   <ol class="steps" aria-label="Your progress">
-    <li id="step-signin" class="current" aria-current="step">1 Sign in</li>
-    <li id="step-check">2 Health check</li>
-    <li id="step-payout">3 Test payout</li>
+    <li id="step-signin" class="current" aria-current="step"><span class="num">1</span> Sign in</li>
+    <li id="step-check"><span class="num">2</span> Health check</li>
+    <li id="step-payout"><span class="num">3</span> Test payout</li>
   </ol>
   <section class="card" aria-labelledby="signin-title">
     <h2 id="signin-title">Start with your Pi account</h2>
@@ -237,7 +238,11 @@
     const list = document.getElementById('fleet-list'); list.textContent = '';
     const reports = fleet.map(n => latestFor(n.host)).filter(Boolean);
     const attention = fleet.filter(n => stateOf(latestFor(n.host)) !== 'SYNCED').length;
-    document.getElementById('fleet-verdict').textContent = fleet.length && !attention ? 'All ' + fleet.length + ' nodes are healthy.' : fleet.length + (fleet.length === 1 ? ' node watched. ' : ' nodes watched. ') + attention + (attention === 1 ? ' needs attention.' : ' need attention.');
+    const verdictEl = document.getElementById('fleet-verdict');
+    verdictEl.textContent = '';
+    const seg = (text, isNum) => { const span = document.createElement('span'); if (isNum) span.className = 'num'; span.textContent = text; verdictEl.appendChild(span); };
+    if (fleet.length && !attention) { seg('All '); seg(String(fleet.length), true); seg(' nodes are healthy.'); }
+    else { seg(String(fleet.length), true); seg(fleet.length === 1 ? ' node watched. ' : ' nodes watched. '); seg(String(attention), true); seg(attention === 1 ? ' needs attention.' : ' need attention.'); }
     for (const node of fleet) {
       const r = latestFor(node.host), state = progress.get(node.host) || stateOf(r);
       const entry = append(list, 'article', '', 'fleet-entry');
