@@ -57,6 +57,8 @@ test('verdicts cover healthy, blocked ports, sync lag and missing ledger', () =>
   const blocked = verdicts(ports(false), 100, 100);
   assert.equal(blocked.sections.ports.level, 'bad');
   assert.equal(blocked.fixes[0].title, 'Open your node ports');
+  assert.match(blocked.fixes[0].how, /No router setting can fix a CGNAT block/);
+  assert.match(blocked.fixes[0].how, /100\.64\.0\.0 – 100\.127\.255\.255/);
   assert.equal(verdicts(ports(true), 6000, 1000).sections.sync.level, 'bad');
   const missing = verdicts(ports(true), 100);
   assert.equal(missing.sections.sync.level, 'warn');
@@ -65,6 +67,13 @@ test('verdicts cover healthy, blocked ports, sync lag and missing ledger', () =>
   const ranked = verdicts(partial, 6000, 1000);
   assert.equal(ranked.fixes[0].title, 'Let your node catch up');
   assert.match(ranked.fixes[1].why, /31402/);
+  const published = ports(false).map((p,i) => ({ ...p, open: i >= 1 && i <= 3 }));
+  const software = verdicts(published, 100, 100);
+  assert.equal(software.fixes[0].title, 'No action needed — software range');
+  assert.match(software.fixes[0].why, /found 31401, 31402, 31403 open/);
+  const subset = verdicts(ports(false).map((p,i) => ({ ...p, open: i === 1 || i === 2 })), 100, 100);
+  assert.equal(subset.fixes[0].title, 'No action needed — software range');
+  assert.match(subset.fixes[0].why, /found 31401, 31402 open/);
   for (const [gap, level] of [[10, 'ok'], [11, 'warn'], [1000, 'warn'], [1001, 'bad']]) {
     assert.equal(verdicts(ports(true), 2000, 2000 - gap).sections.sync.level, level);
   }
@@ -271,8 +280,15 @@ test('latestLedger reads configured Horizon and sanitizes failures', async () =>
     assert.equal(url, 'https://fixture.invalid/ledgers?order=desc&limit=1');
     return json({ _embedded: { records: [{ sequence: 123, protocol_version: 23 }] } });
   } });
-  assert.deepEqual(await ledger.latestLedger(), { sequence: 123, protocolVersion: 23 });
+  assert.deepEqual(await ledger.latestLedger(), { sequence: 123, protocolVersion: 23, closedAt: null });
   await assert.rejects(createLedger({ fetchImpl: async () => { throw new Error('private'); } }).latestLedger(), { status: 502, code: 'horizon_unavailable' });
+});
+
+test('latestLedger keeps a valid closed_at and treats missing or bad dates as null', async () => {
+  for (const [closed_at, expected] of [['2026-11-20T12:00:00Z','2026-11-20T12:00:00Z'],[undefined,null],['not-a-date',null]]) {
+    const ledger=createLedger({env:{PI_HORIZON_URL:'https://fixture.invalid'},fetchImpl:async()=>json({_embedded:{records:[{sequence:1,protocol_version:2,...(closed_at===undefined?{}:{closed_at})}]}})});
+    assert.equal((await ledger.latestLedger()).closedAt,expected);
+  }
 });
 
  test('current protocol comes from Horizon root and rejects invalid data', async () => {

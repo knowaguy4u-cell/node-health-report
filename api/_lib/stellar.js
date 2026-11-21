@@ -75,7 +75,8 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
       if (!Number.isSafeInteger(record?.sequence) || !Number.isSafeInteger(record?.protocol_version)) {
         throw new HttpError(502, 'invalid_horizon_response');
       }
-      return { sequence: record.sequence, protocolVersion: record.protocol_version };
+      const closedAt = typeof record.closed_at === 'string' && Number.isFinite(Date.parse(record.closed_at)) ? record.closed_at : null;
+      return { sequence: record.sequence, protocolVersion: record.protocol_version, closedAt };
     },
     async prepare(payment) {
       const seed = typeof env.PI_WALLET_SEED === 'string' ? env.PI_WALLET_SEED.trim() : env.PI_WALLET_SEED;

@@ -360,6 +360,8 @@
     <p id="healthy-framing" class="hint">Judged by ledger progress against the network — a node can have the Pi app open and still be behind.</p>
     <section id="health-score" aria-live="polite" hidden><h3>HEALTH SCORE</h3><p id="score-value"></p><p id="score-fix"></p></section>
     <p id="report-trend" class="hint" hidden></p><p id="report-changes" class="hint" hidden></p>
+    <p id="network-stall" class="hint" hidden></p><p id="testnet2-ports" class="hint" hidden></p>
+    <p><button id="share-card" type="button" disabled>Share report card</button> <button id="proof-download" type="button" disabled>Download proof of check</button></p>
     <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
     <p><button id="health-check" aria-describedby="check-hint latest-status" disabled>Run full health check — <span class="num">1</span> Test-Pi</button></p>
     <p id="check-hint" class="hint">Sign in above to run your health check.</p>
@@ -381,10 +383,17 @@
     <h3>Try a test payout</h3>
     <button id="payout" aria-describedby="payout-hint latest-status" disabled>Send test payout — <span class="num">0.5</span> Test-Pi</button>
     <p id="payout-hint" class="hint">Available after your health check is complete.</p>
+    <p>One purchase covers your whole fleet — every node you add, no per-node charge and no subscription.</p>
     <div id="payment-status" class="status-area" role="status" aria-live="polite">
       <p id="latest-status" class="status-banner info">Sign in to get started. Your full health check costs <span class="num">1</span> Test-Pi.</p>
       <details><summary>Details</summary><ol id="status-history"></ol><p id="report-history"></p><ol id="fleet-history"></ol></details>
     </div>
+  </section>
+  <section class="card" aria-labelledby="limits-title"><h2 id="limits-title">WHAT WE CAN'T SEE</h2>
+    <p>We probe your node's public ports from our server and compare its ledger with the public network record. Nothing is installed on your computer, and we never ask you to install anything.</p>
+    <p>A check is a snapshot from the moment it runs, taken while this page is open. We do not watch in the background and we cannot send alerts.</p>
+    <p>Peers, Docker containers, CPU, memory, disk, and your node's own software version live on your machine. Tools that show them ask you to install software on the node computer. We don't — so we don't show those numbers, and we never guess them.</p>
+    <p>The health score is computed only from the ports and the sync gap we actually measured. When something can't be measured, the app says so instead of estimating.</p>
   </section>
 
 </main>
@@ -513,6 +522,8 @@
     if ((r.fixes || []).length === 1 && /^Nothing to fix/.test(r.fixes[0].title)) return 'Nothing to fix — the remaining points come back as the gap closes.';
     const portRecover = 50 - score.ports, syncRecover = 50 - score.sync;
     const usePorts = portRecover >= syncRecover;
+    const opened = (Array.isArray(r.ports) ? r.ports : []).filter(p => p.open).map(p => p.port);
+    if (usePorts && opened.length > 0 && opened.every(p => p >= 31401 && p <= 31403)) return 'Nothing you can open — the unpublished ports belong to the software, not your setup.';
     const fix = (r.fixes || []).find(f => usePorts ? /port/i.test(f.title) : /Let your node catch up|Almost synced/i.test(f.title));
     return fix ? 'The fix that raises it most: ' + fix.title + ' (+' + Math.max(portRecover, syncRecover) + ').' : 'The report has no matching fix listed.';
   }
@@ -531,7 +542,49 @@
     const shown = gaps.slice(-5), a = shown[0], b = shown.at(-1);
     return 'Sync gap across your checks: ' + shown.join(' → ') + ' — ' + (b < a ? 'closing' : b > a ? 'growing' : 'steady') + '.';
   }
+  function cardLines(r) {
+    const score = scoreFor(r), verdict = r.sections.status.line;
+    const ports = (Array.isArray(r.ports) ? r.ports : []).filter(p => p.open).map(p => p.port);
+    const portLine = ports.length > 0 && ports.every(p => p >= 31401 && p <= 31403)
+      ? (ports.length === 3 ? 'All three ports the current Pi software publishes are open from outside.' : 'Outside check found ' + ports.join(', ') + ' open — the range the current Pi software publishes.')
+      : r.sections.ports.line;
+    return ['Node Health Report', verdict, ...(score ? ['Health score: ' + score.value + ' — ' + scoreBand(score.value)] : []), 'Host: ' + r.host, 'Ports: ' + portLine,
+      'Sync: ' + r.sections.sync.line, 'Checked: ' + new Date(r.checkedAt).toLocaleString(), 'nodehealthreport3739.pinet.com'];
+  }
+  function proofText(r) {
+    const date = new Date(r.checkedAt), measured = r.syncGap != null;
+    const score = scoreFor(r);
+    const ports = Array.isArray(r.ports) ? Array.from({length:10}, (_,i) => { const p=31400+i, row=r.ports.find(x=>x.port===p); return 'Port ' + p + ': ' + (row ? (row.open ? 'open' : 'closed') : 'not in this report'); })
+      : ['Ports: ' + r.portsOpen + ' of 10 answered (per-port detail is not in this saved report)'];
+    return ['Node Health Report — proof of check', 'nodehealthreport3739.pinet.com', 'Host: ' + r.host,
+      'Check time: ' + r.checkedAt + ' (' + date.toLocaleString() + ')', 'Measured from outside — what the network sees.', ...ports,
+      'Network ledger: ' + (r.networkLedger ?? 'not provided'), 'Node ledger: ' + (r.nodeLedger ?? 'not provided'),
+      'Sync gap: ' + (measured ? r.syncGap : 'not measured'), ...(r.currentProtocolVersion == null ? [] : ['Network protocol version: ' + r.currentProtocolVersion]),
+      'Status: ' + r.sections.status.line, 'Sync: ' + r.sections.sync.line, 'Ports: ' + r.sections.ports.line,
+      score ? 'Health score: ' + score.value + ' — ' + scoreBand(score.value) : 'Health score: not scored — no node ledger was entered for this check',
+      'Generated by Node Health Report from an outside check. A snapshot of the moment above — not a promise about any other moment.'].join('\n');
+  }
+  function drawShareCard(r) {
+    const lines=cardLines(r), canvas=document.createElement('canvas'); canvas.width=1200; canvas.height=630;
+    const ctx=canvas.getContext('2d'); ctx.fillStyle='#060b18'; ctx.fillRect(0,0,1200,630);
+    ctx.fillStyle='#e6edf7'; ctx.font='bold 40px Times New Roman'; ctx.fillText(lines[0],64,76);
+    const color=r.sections.status.level==='ok'?'#34d399':r.sections.status.level==='warn'?'#f59e0b':'#f87171';
+    ctx.fillStyle=color; ctx.font='34px Times New Roman'; ctx.fillText(lines[1],64,155);
+    ctx.fillStyle='#94a3b8'; ctx.font='26px ui-monospace, monospace';
+    lines.slice(2).forEach((line,i)=>ctx.fillText(line,64,230+i*48,1070));
+    return new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+  }
+  async function shareReportCard(r) {
+    const blob=await drawShareCard(r), file=new File([blob], 'node-health-report.png',{type:'image/png'});
+    if (navigator.canShare?.({files:[file]})) { await navigator.share({files:[file], title:'Node Health Report'}); return; }
+    const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download='node-health-report.png'; link.click(); URL.revokeObjectURL(link.href);
+  }
+  function downloadProof(r) {
+    const blob=new Blob([proofText(r)],{type:'text/plain;charset=utf-8'}), link=document.createElement('a');
+    link.href=URL.createObjectURL(blob); link.download='node-health-proof-' + r.host.replace(/[^a-z0-9.-]/gi,'_') + '-' + r.checkedAt.slice(0,10) + '.txt'; link.click(); URL.revokeObjectURL(link.href);
+  }
   function renderReportExtras(r) {
+    document.getElementById('share-card').disabled=false; document.getElementById('proof-download').disabled=false;
     const score = scoreFor(r), block = document.getElementById('health-score'); block.hidden = false;
     if (!score) { document.getElementById('score-value').textContent = "Not scored yet — enter your node's current ledger so sync can be measured."; document.getElementById('score-fix').textContent = ''; }
     else {
@@ -542,7 +595,15 @@
     const trend = trendFor(r.host), changed = changesFor(r.host);
     const trendEl = document.getElementById('report-trend'); trendEl.hidden = !trend; if (trend) renderWithNums(trendEl, trend);
     const changeEl = document.getElementById('report-changes'); changeEl.hidden = !changed; if (changed) renderWithNums(changeEl, changed);
+    const stall=document.getElementById('network-stall'), mins=Math.floor((Date.parse(r.checkedAt)-Date.parse(r.networkLedgerClosedAt))/60000);
+    stall.hidden=!(r.networkLedgerClosedAt && Number.isFinite(mins) && mins>10);
+    if (!stall.hidden) renderWithNums(stall,'The whole network is stalled — its last ledger closed ' + mins + ' minutes ago. This is not your node.');
+    const opened=(Array.isArray(r.ports)?r.ports:[]).filter(p=>p.open).map(p=>p.port), trio=opened.length>0 && opened.every(p=>p>=31401&&p<=31403), portEl=document.getElementById('testnet2-ports');
+    portEl.hidden=!trio;
+    if(trio) renderWithNums(portEl, 'The Pi app still asks for 31400–31409, but the current Pi software publishes only 31401, 31402, 31403 — and our outside check found ' + (opened.length===3 ? 'all three' : opened.join(' and ')) + ' open. This is the software\'s range, not a fault in your setup.');
   }
+  document.getElementById('share-card').addEventListener('click',()=>lastReport && shareReportCard(lastReport));
+  document.getElementById('proof-download').addEventListener('click',()=>lastReport && downloadProof(lastReport));
   function stateOf(r) { return !r ? 'NOT CHECKED' : r.portsOpen === 0 ? 'UNREACHABLE' : r.sections.status.level === 'ok' ? 'SYNCED' : 'BEHIND'; }
   function changedAt(host) {
     const rows = observations(host);
