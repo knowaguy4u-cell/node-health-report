@@ -19,9 +19,9 @@
   .steps .current { color: #344cc3; border-color: #344cc3; font-weight: 700; }
   .steps .done { color: #19643c; border-color: #268353; }
   .ok { color: #19643c; } .warn { color: #795500; } .bad { color: #aa2837; }
-  button { min-height: 48px; width: 100%; border: 1px solid #344cc3; border-radius: .7rem; background: #344cc3; color: #fff; font: inherit; font-weight: 650; padding: .8rem 1rem; cursor: pointer; }
+  button { min-height: 44px; width: 100%; border: 1px solid #344cc3; border-radius: .7rem; background: #344cc3; color: #fff; font: inherit; font-weight: 650; padding: .8rem 1rem; cursor: pointer; }
   button:disabled { background: #e8ecf3; border-color: #cbd3e1; color: #566277; cursor: default; }
-  button:focus-visible, summary:focus-visible { outline: 3px solid #795500; outline-offset: 4px; }
+  :focus-visible { outline: 2px solid #795500; outline-offset: 2px; }
   .checks { list-style: none; padding: 0; }
   .checks li { padding: .85rem 0; border-bottom: 1px solid #e6eaf1; }
   .checks span { display: block; font-size: .9rem; }
@@ -69,7 +69,7 @@
       <li>Ports and connectivity <span id="check-ports" class="warn">not checked yet</span></li>
     </ul>
     <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
-    <p><button id="health-check" disabled>Run full health check — 1 Test-Pi</button></p>
+    <p><button id="health-check" aria-describedby="check-hint latest-status" disabled>Run full health check — 1 Test-Pi</button></p>
     <p id="check-hint" class="hint">Sign in above to run your health check.</p>
     <section id="run-panel" hidden aria-labelledby="run-title">
       <h3 id="run-title">Run your health check</h3>
@@ -85,7 +85,7 @@
       <p id="check-result" role="status" aria-live="polite"></p>
     </section>
     <h3>Try a test payout</h3>
-    <button id="payout" aria-describedby="payout-hint" disabled>Send test payout — 0.5 Test-Pi</button>
+    <button id="payout" aria-describedby="payout-hint latest-status" disabled>Send test payout — 0.5 Test-Pi</button>
     <p id="payout-hint" class="hint">Available after your health check is complete.</p>
     <div id="payment-status" class="status-area" role="status" aria-live="polite">
       <p id="latest-status" class="status-banner info">Sign in to get started. Your full health check costs 1 Test-Pi.</p>

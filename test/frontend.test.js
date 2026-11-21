@@ -189,3 +189,17 @@ test('frontend trims whitespace from node host input', async () => {
   const call = b.calls.at(-1);
   assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100 });
 });
+
+
+test('frontend buttons have a 44px minimum height and visible keyboard focus', () => {
+  assert.match(html, /button\s*\{[^}]*min-height:\s*44px;/);
+  assert.match(html, /:focus-visible\s*\{[^}]*outline:\s*2px solid #795500;[^}]*outline-offset:\s*2px;/);
+});
+
+test('frontend purchase and payout buttons describe their existing status lines', () => {
+  for (const [button, hint] of [['health-check', 'check-hint'], ['payout', 'payout-hint']]) {
+    assert.match(html, new RegExp('<button id="' + button + '"[^>]*aria-describedby="' + hint + ' latest-status"'));
+    assert.match(html, new RegExp('<p id="' + hint + '"'));
+  }
+  assert.match(html, /<p id="latest-status"/);
+});
