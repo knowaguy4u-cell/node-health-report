@@ -62,6 +62,13 @@ function createLedger({ fetchImpl = (...args) => fetch(...args), env = process.e
       }
       return payments;
     },
+    async currentProtocolVersion() {
+      const data = await json('/');
+      if (!Number.isSafeInteger(data.current_protocol_version) || data.current_protocol_version < 0) {
+        throw new HttpError(502, 'invalid_horizon_response');
+      }
+      return data.current_protocol_version;
+    },
     async latestLedger() {
       const data = await json('/ledgers?order=desc&limit=1');
       const record = data._embedded?.records?.[0];

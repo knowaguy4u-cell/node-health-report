@@ -174,8 +174,10 @@ function createCheck({ pi, ledger, store, network, probe = probePorts, lookup = 
     }
     const ports = await probe(host, PORTS, 1200);
     const latest = await ledger.latestLedger();
+    let currentProtocolVersion = null;
+    try { currentProtocolVersion = await ledger.currentProtocolVersion(); } catch {}
     return { host, checkedAt: new Date(Date.now()).toISOString(), ports, networkLedger: latest.sequence,
-      nodeLedger, ...verdicts(ports, latest.sequence, nodeLedger) };
+      currentProtocolVersion, nodeLedger, ...verdicts(ports, latest.sequence, nodeLedger) };
   };
 }
 
