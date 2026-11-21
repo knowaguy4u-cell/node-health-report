@@ -310,7 +310,7 @@ test('429 queue states show positions and minute ETAs and retry at 61 second int
   assert.deepEqual(clock.timers.map(t => t.delay), [61000, 122000, 183000]);
   assert.equal(evaluate(b, 'queueCopy(fleet[0].host)'), 'Queue position 1 — about 1 minute. Keep this page open.');
   assert.equal(evaluate(b, 'queueCopy(fleet[2].host)'), 'Queue position 3 — about 3 minutes. Keep this page open.');
-  assert.doesNotMatch(html, /under a minute/);
+  assert.doesNotMatch(evaluate(b, 'queueCopy(fleet[0].host)'), /under a minute/);
   let attempts = 0;
   b.context.fetch = async (url, options) => { attempts++; return { ok: true, json: async () => observed(JSON.parse(options.body).host, '2026-11-20T12:00:00Z', null) }; };
   await clock.tick(); assert.equal(attempts, 1);
@@ -430,13 +430,19 @@ test('null protocol renders an em dash and hides the network note', () => {
   assert.equal(b.element('network-note').hidden, true);
 });
 
-test('empty fleet offers an honest starting point and clears it when a node is added', async () => {
+test('empty fleet uses the directory empty-state grammar and its button opens the add-node flow', async () => {
   const b = browser();
   const empty = b.element('fleet-list').children[0];
   assert.equal(empty.className, 'empty-state');
-  assert.equal(empty.children[0].textContent, 'Your fleet starts here');
-  assert.match(empty.children[1].textContent, /on this device/);
+  assert.equal(empty.children[0].textContent, 'No nodes yet');
+  assert.equal(empty.children[1].textContent, 'Add a node and its first check takes under a minute.');
+  assert.equal(empty.children[2].textContent, 'Add a node');
+  assert.match(html, /\.empty-state h2 \{[^}]*font-weight:\s*700/);
+  assert.match(html, /\.empty-state button \{[^}]*background:\s*transparent/);
   assert.equal(b.element('check-all').disabled, true);
+  b.element('run-panel').hidden = true;
+  empty.children[2].onclick();
+  assert.equal(b.element('run-panel').hidden, false);
   b.element('node-host').value = 'new.example';
   b.element('own-node').checked = true;
   await b.element('add-node').click();
@@ -737,4 +743,59 @@ test('round three queued check-all waits for the retry before recording completi
   await clock.tick();
   assert.ok(Number.isFinite(Date.parse(JSON.parse(storage.get('nhr:lastCheckAll')))));
   assert.match(b.element('fleet-strip').textContent, /last check-all \d{2}:\d{2}$/);
+});
+
+test('sample report is a labelled example in the real format with no ledger numbers or export buttons', () => {
+  const start = html.indexOf('<section id="sample-report"');
+  const end = html.indexOf('<section class="card" aria-labelledby="limits-title">');
+  assert.ok(start > -1 && end > start, 'sample section is placed before the limits section');
+  const sample = html.slice(start, end);
+  assert.equal(sample.split('Sample — an example in the real format, address hidden. Yours will name your node and show its own numbers.').length - 1, 2);
+  assert.match(sample, /<span class="pill neutral" id="sample-tag">SAMPLE<\/span>/);
+  assert.match(sample, />sample-node</);
+  assert.match(sample, /31400–31409/);
+  assert.match(sample, /<span class="num">10<\/span> of <span class="num">10<\/span>/);
+  assert.match(sample, /sync gap <span class="num">3<\/span> blocks/);
+  assert.match(sample, /protocol <span class="num">20<\/span>/);
+  assert.match(sample, /<span class="num ok">95<\/span> of <span class="num">100<\/span> — Healthy/);
+  const points = [...sample.matchAll(/class="num ok">(\d+)<\/span> pts/g)].map(match => Number(match[1]));
+  assert.deepEqual(points, [50, 45]);
+  assert.equal(points[0] + points[1], 95);
+  assert.doesNotMatch(sample, /share-card|proof-download|Share report card|Download proof/);
+  assert.doesNotMatch(sample, /networkLedger|nodeLedger|Network ledger|Node ledger/);
+  assert.match(html, /<a id="sample-report-link" href="#sample-report" role="button" aria-expanded="false" aria-controls="sample-report">See a sample report<\/a>/);
+});
+
+test('sample report opens beside the purchase surface without entering storage, fleet or history', async () => {
+  const storage = new Map();
+  const b = browser({ storage });
+  const snapshot = () => JSON.stringify([...storage]);
+  const before = snapshot();
+  assert.equal(b.element('sample-report').hidden, true);
+  await b.element('sample-report-link').click();
+  assert.equal(b.element('sample-report').hidden, false);
+  assert.equal(b.element('sample-report-link').ariaExpanded, 'true');
+  assert.equal(snapshot(), before);
+  assert.equal(evaluate(b, 'fleet.length'), 0);
+  assert.equal(evaluate(b, 'history.length'), 0);
+  await b.element('sample-close').click();
+  assert.equal(b.element('sample-report').hidden, true);
+  assert.equal(b.element('sample-report-link').ariaExpanded, 'false');
+});
+
+test('a fleet filter with no matches offers only the clear-filter empty state', () => {
+  const r = observed('ok.example', '2026-11-20T12:00:00Z', 0, 'ok');
+  const b = browser({ storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: r.host, label: 'OK' }])],
+    ['nhr:history', JSON.stringify([r])],
+  ]) });
+  evaluate(b, "setFleetFilter('attention')");
+  const empty = b.element('fleet-list').children[0];
+  assert.equal(empty.className, 'empty-state');
+  assert.equal(empty.children[0].textContent, 'No nodes match');
+  assert.equal(empty.children[1].textContent, 'Clear the filter to see the whole fleet.');
+  assert.equal(empty.children[2].textContent, 'Clear filter');
+  empty.children[2].onclick();
+  assert.equal(b.element('fleet-list').children[0].className, 'fleet-entry');
+  assert.match(b.element('fleet-verdict').textContent, /All 1 node is healthy/);
 });

@@ -176,8 +176,15 @@
     border: 1px solid rgba(148,163,184,.22);
     border-radius: .3rem;
   }
-  .empty-state h2 { font-size: 1.2rem; margin: 0 0 .45rem; }
-  .empty-state p { color: #94a3b8; margin: 0; font-size: .95rem; }
+  .empty-state h2 { font-size: 1.2rem; font-weight: 700; margin: 0 0 .45rem; }
+  .empty-state p { color: #94a3b8; margin: 0 0 1rem; font-size: .95rem; }
+  .empty-state button { background: transparent; border-color: rgba(148,163,184,.48); }
+  .sample-banner { padding: .7rem .95rem; margin: 0 0 1.35rem; border: 1px dashed rgba(245,158,11,.58); border-radius: .25rem; background: rgba(245,158,11,.07); color: #f59e0b; font-size: .88rem; line-height: 1.55; }
+  #sample-report .sample-banner:last-child { margin: 1.35rem 0 0; }
+  #sample-report .entry-heading { margin-bottom: .35rem; }
+  #sample-report h2 { font-size: 1.45rem; margin: 0; }
+  #sample-score-rows { list-style: none; padding: 0; margin: .8rem 0; border-top: 1px solid rgba(148,163,184,.16); }
+  #sample-score-rows li { display: flex; justify-content: space-between; gap: 1rem; padding: .6rem 0; border-bottom: 1px solid rgba(148,163,184,.16); color: #94a3b8; }
   button {
     min-height: 44px;
     padding: .68rem 1.05rem;
@@ -369,7 +376,7 @@
     <p id="network-stall" class="hint" hidden></p><p id="testnet2-ports" class="hint" hidden></p>
     <p><button id="share-card" type="button" disabled>Share report card</button> <button id="proof-download" type="button" disabled>Download proof of check</button></p>
     <p id="report-ready" class="ok" hidden>Full health check unlocked — your report is ready.</p>
-    <p><button id="health-check" aria-describedby="check-hint latest-status" disabled>Run full health check — <span class="num">1</span> Test-Pi</button></p>
+    <p><button id="health-check" aria-describedby="check-hint latest-status" disabled>Run full health check — <span class="num">1</span> Test-Pi</button> <a id="sample-report-link" href="#sample-report" role="button" aria-expanded="false" aria-controls="sample-report">See a sample report</a></p>
     <p id="check-hint" class="hint">Sign in above to run your health check.</p>
     <section id="run-panel" hidden aria-labelledby="run-title">
       <h3 id="run-title">Add / check a node</h3>
@@ -394,6 +401,33 @@
       <p id="latest-status" class="status-banner info">Sign in to get started. Your full health check costs <span class="num">1</span> Test-Pi.</p>
       <details><summary>Details</summary><ol id="status-history"></ol><p id="report-history"></p><ol id="fleet-history"></ol></details>
     </div>
+  </section>
+  <section id="sample-report" class="card" hidden aria-labelledby="sample-title">
+    <p class="sample-banner" id="sample-banner-top">Sample — an example in the real format, address hidden. Yours will name your node and show its own numbers.</p>
+    <div class="entry-heading">
+      <h2 id="sample-title" tabindex="-1">sample-node</h2>
+      <span class="pill neutral" id="sample-tag">SAMPLE</span>
+    </div>
+    <p class="hint" id="sample-meta">Example check · protocol <span class="num">20</span> · sync gap <span class="num">3</span> blocks</p>
+    <ul class="checks">
+      <li>Node status <span class="ok">Node is healthy</span></li>
+      <li>Blockchain sync <span class="ok">3 blocks behind the network</span></li>
+      <li>Ports and connectivity <span class="ok">All <span class="num">10</span> ports <span class="num">31400–31409</span> are open</span> <span class="badge">OUTSIDE-VERIFIED</span></li>
+    </ul>
+    <p class="hint">Measured from outside — what the network sees. Pi's built-in checker often disagrees; the outside check is the one that counts.</p>
+    <p class="hint">Judged by ledger progress against the network — a node can have the Pi app open and still be behind.</p>
+    <section id="sample-score" aria-label="Sample health score">
+      <h3>HEALTH SCORE</h3>
+      <p id="sample-score-value"><span class="num ok">95</span> of <span class="num">100</span> — Healthy</p>
+      <ul id="sample-score-rows">
+        <li><span>Ports — <span class="num">10</span> of <span class="num">10</span> open</span> <span class="num ok">50</span> pts</li>
+        <li><span>Sync — <span class="num">3</span> blocks behind the network</span> <span class="num ok">45</span> pts</li>
+      </ul>
+      <p id="sample-score-fix">The fix that raises it most: Almost synced (+<span class="num">5</span>).</p>
+    </section>
+    <p class="hint">A check is a snapshot from the moment it runs, taken while this page is open. We do not watch in the background and we cannot send alerts.</p>
+    <p><button id="sample-close" type="button">Close sample</button></p>
+    <p class="sample-banner" id="sample-banner-bottom">Sample — an example in the real format, address hidden. Yours will name your node and show its own numbers.</p>
   </section>
   <section class="card" aria-labelledby="limits-title"><h2 id="limits-title">WHAT WE CAN'T SEE</h2>
     <p>We probe your node's public ports from our server and compare its ledger with the public network record. Nothing is installed on your computer, and we never ask you to install anything.</p>
@@ -657,6 +691,24 @@
   }
   document.getElementById('share-card').addEventListener('click',()=>lastReport && shareReportCard(lastReport));
   document.getElementById('proof-download').addEventListener('click',()=>lastReport && downloadProof(lastReport));
+  // The sample is static markup: it is never read from or written to storage and
+  // is never added to the fleet or history. Opening it only reveals that markup.
+  function openSampleReport() {
+    const panel = document.getElementById('sample-report'), link = document.getElementById('sample-report-link');
+    if (!panel) return;
+    panel.hidden = false;
+    if (link) link.ariaExpanded = 'true';
+    panel.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    document.getElementById('sample-title')?.focus?.();
+  }
+  function closeSampleReport() {
+    const panel = document.getElementById('sample-report'), link = document.getElementById('sample-report-link');
+    if (!panel) return;
+    panel.hidden = true;
+    if (link) { link.ariaExpanded = 'false'; link.focus?.(); }
+  }
+  document.getElementById('sample-report-link')?.addEventListener('click', event => { event?.preventDefault?.(); openSampleReport(); });
+  document.getElementById('sample-close')?.addEventListener('click', closeSampleReport);
   function stateOf(r) { return !r ? 'NOT CHECKED' : r.portsOpen === 0 ? 'UNREACHABLE' : r.sections.status.level === 'ok' ? 'SYNCED' : 'BEHIND'; }
   function changedAt(host) {
     const rows = observations(host);
@@ -685,8 +737,23 @@
     renderParts(el, String(text).split(/(\d+(?:[.,:/]\d+)*)/).filter(Boolean).map(part => [part, /^\d/.test(part) ? 'num' : '']));
   }
   let checkingAll = false;
+  // View-only filter state lives with the fleet constants above; nothing stored.
+  function visibleFleet() {
+    if (fleetFilter === 'all') return fleet;
+    return fleet.filter(node => fleetHealth(latestFor(node.host)) === fleetFilter);
+  }
+  function setFleetFilter(filter) {
+    fleetFilter = filter === 'healthy' || filter === 'attention' ? filter : 'all';
+    renderFleet();
+  }
+  function openAddNodeFlow() {
+    document.getElementById('report').hidden = false;
+    document.getElementById('run-panel').hidden = false;
+    document.getElementById('node-host')?.focus?.();
+  }
   function renderFleet() {
     const list = document.getElementById('fleet-list'); list.textContent = '';
+    const nodes = visibleFleet();
     const reports = fleet.map(n => latestFor(n.host)).filter(Boolean);
     const attention = fleet.filter(n => fleetHealth(latestFor(n.host)) === 'attention').length;
     const healthy = fleet.length - attention;
@@ -703,8 +770,18 @@
     else renderParts(verdictEl, [[String(fleet.length), 'num'], [fleet.length === 1 ? ' node watched. ' : ' nodes watched. '], [String(attention), attention ? 'num warn' : 'num'], [attention === 1 ? ' needs attention.' : ' need attention.']]);
     if (!fleet.length) {
       const empty = append(list, 'div', '', 'empty-state');
-      append(empty, 'h2', 'Your fleet starts here');
-      append(empty, 'p', 'Add your node to keep its checks together on this device. Sign in below to get started.');
+      append(empty, 'h2', 'No nodes yet');
+      append(empty, 'p', 'Add a node and its first check takes under a minute.');
+      const add = append(empty, 'button', 'Add a node');
+      add.type = 'button';
+      add.onclick = openAddNodeFlow;
+    } else if (!nodes.length) {
+      const empty = append(list, 'div', '', 'empty-state');
+      append(empty, 'h2', 'No nodes match');
+      append(empty, 'p', 'Clear the filter to see the whole fleet.');
+      const clear = append(empty, 'button', 'Clear filter');
+      clear.type = 'button';
+      clear.onclick = () => setFleetFilter('all');
     }
     for (const node of fleetOrder(fleet).filter(n => fleetFilter === 'all' || fleetHealth(latestFor(n.host)) === fleetFilter)) {
       const r = latestFor(node.host), state = progress.get(node.host) || stateOf(r);
