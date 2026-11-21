@@ -519,10 +519,11 @@
   function scoreBand(score) { return score >= 90 ? 'Healthy' : score >= 70 ? 'Good' : score >= 40 ? 'Needs a look' : 'At risk'; }
   function scoreFix(r, score) {
     if (score.value === 100) return 'Full score — run this check weekly to keep it.';
-    if (score.ports < 50 && (r.fixes || []).some(f => f.title === 'No action needed — software range')) return 'Nothing you can open — the unpublished ports belong to the software, not your setup.';
     if ((r.fixes || []).length === 1 && /^Nothing to fix/.test(r.fixes[0].title)) return 'Nothing to fix — the remaining points come back as the gap closes.';
     const portRecover = 50 - score.ports, syncRecover = 50 - score.sync;
     const usePorts = portRecover >= syncRecover;
+    const opened = (Array.isArray(r.ports) ? r.ports : []).filter(p => p.open).map(p => p.port);
+    if (usePorts && opened.length > 0 && opened.every(p => p >= 31401 && p <= 31403)) return 'Nothing you can open — the unpublished ports belong to the software, not your setup.';
     const fix = (r.fixes || []).find(f => usePorts ? /port/i.test(f.title) : /Let your node catch up|Almost synced/i.test(f.title));
     return fix ? 'The fix that raises it most: ' + fix.title + ' (+' + Math.max(portRecover, syncRecover) + ').' : 'The report has no matching fix listed.';
   }

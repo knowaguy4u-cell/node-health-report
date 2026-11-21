@@ -70,6 +70,10 @@ test('verdicts cover healthy, blocked ports, sync lag and missing ledger', () =>
   const published = ports(false).map((p,i) => ({ ...p, open: i >= 1 && i <= 3 }));
   const software = verdicts(published, 100, 100);
   assert.equal(software.fixes[0].title, 'No action needed — software range');
+  assert.match(software.fixes[0].why, /found 31401, 31402, 31403 open/);
+  const subset = verdicts(ports(false).map((p,i) => ({ ...p, open: i === 1 || i === 2 })), 100, 100);
+  assert.equal(subset.fixes[0].title, 'No action needed — software range');
+  assert.match(subset.fixes[0].why, /found 31401, 31402 open/);
   for (const [gap, level] of [[10, 'ok'], [11, 'warn'], [1000, 'warn'], [1001, 'bad']]) {
     assert.equal(verdicts(ports(true), 2000, 2000 - gap).sections.sync.level, level);
   }

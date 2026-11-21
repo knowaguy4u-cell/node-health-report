@@ -637,3 +637,16 @@ test('round two static copy, measured stall and Testnet2 line',()=>{
   assert.equal(c.element('network-stall').hidden,true);
   assert.match(html,/One purchase covers your whole fleet/); assert.match(html,/WHAT WE CAN'T SEE/);
 });
+
+test('score fix Testnet2 line follows the measured ports and the bigger lever', () => {
+  const b = browser();
+  const allPorts = Array.from({ length: 10 }, (_, i) => ({ port: 31400 + i, open: i >= 1 && i <= 3 }));
+  const behind = observed('a', '2026-11-20T12:00:00Z', 200000, 'bad', 3);
+  behind.ports = allPorts;
+  behind.fixes = [{ title: 'Let your node catch up', why: '', how: '' }, { title: 'No action needed — software range', why: '', how: '' }];
+  assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(behind) + ', scoreFor(' + JSON.stringify(behind) + '))'), 'The fix that raises it most: Let your node catch up (+50).');
+  const legacy = observed('a', '2026-11-20T12:00:00Z', 0, 'warn', 3);
+  legacy.ports = allPorts;
+  legacy.fixes = [{ title: 'Open the missing ports', why: '', how: '' }];
+  assert.equal(evaluate(b, 'scoreFix(' + JSON.stringify(legacy) + ', scoreFor(' + JSON.stringify(legacy) + '))'), 'Nothing you can open — the unpublished ports belong to the software, not your setup.');
+});
