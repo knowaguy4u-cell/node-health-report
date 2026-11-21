@@ -93,6 +93,8 @@ function probePorts(host, ports, timeoutMs) {
 
 function verdicts(ports, networkLedger, nodeLedger = null) {
   const portsOpen = ports.filter(p => p.open).length;
+  const published = ports.filter(p => p.open).map(p => p.port);
+  const softwareRange = published.length > 0 && published.every(p => p >= 31401 && p <= 31403);
   const syncGap = nodeLedger == null ? null : Math.max(0, networkLedger - nodeLedger);
   const sections = {
     ports: { level: portsOpen === 10 ? 'ok' : portsOpen ? 'warn' : 'bad',
@@ -105,7 +107,8 @@ function verdicts(ports, networkLedger, nodeLedger = null) {
   sections.status = { level, line: level === 'ok' ? 'Your node looks healthy' : level === 'warn' ? 'Your node needs attention' : 'Your node is at risk' };
   const fixes = [];
   const add = (section, title, why, how) => fixes.push({ level: sections[section].level, title, why, how });
-  if (!portsOpen) add('ports', 'Open your node ports', 'Your node cannot be reached by the network. A node must be publicly reachable.', 'Forward ports 31400–31409 to the node in your router and allow them in your firewall.');
+  if (!portsOpen) add('ports', 'Open your node ports', 'Your node cannot be reached by the network. A node must be publicly reachable.', "1. Router: forward ports 31400–31409 to the node's local address; make that local address fixed with a DHCP reservation so the forward holds. 2. ISP / CGNAT: compare the router's WAN address with your public IP. If the WAN address falls in 100.64.0.0 – 100.127.255.255, the ISP has the connection behind carrier-grade NAT: no router setting can open ports through it. No router setting can fix a CGNAT block. Ask the ISP for a public IP, or use a VPN that offers port forwarding. 3. Firewall: allow the node software / ports 31400–31409 inbound in the machine's firewall.");
+  else if (softwareRange) add('ports', 'No action needed — software range', 'The current Pi software publishes ports 31401–31403 while the Pi app still asks for 31400–31409.', 'No router change can open ports the software does not publish. Keep the published ports forwarded.');
   else if (portsOpen < 10) add('ports', 'Open the missing ports', `These ports did not answer: ${ports.filter(p => !p.open).map(p => p.port).join(', ')}.`, 'Forward these ports to the node in your router and allow them in your firewall. Your node must be publicly reachable.');
   if (syncGap === null) add('sync', 'Add your node ledger next time', 'We need your node ledger to measure sync.', "Find the current ledger in your node software's status display.");
   else if (syncGap > 1000) add('sync', 'Let your node catch up', `Your node is ${syncGap} ledgers behind.`, 'Leave your node running and check its disk and connection.');
@@ -177,7 +180,7 @@ function createCheck({ pi, ledger, store, network, probe = probePorts, lookup = 
     let currentProtocolVersion = null;
     try { currentProtocolVersion = await ledger.currentProtocolVersion(); } catch {}
     return { host, checkedAt: new Date(Date.now()).toISOString(), ports, networkLedger: latest.sequence,
-      currentProtocolVersion, nodeLedger, ...verdicts(ports, latest.sequence, nodeLedger) };
+      networkLedgerClosedAt: latest.closedAt ?? null, currentProtocolVersion, nodeLedger, ...verdicts(ports, latest.sequence, nodeLedger) };
   };
 }
 
