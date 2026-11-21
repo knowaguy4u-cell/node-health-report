@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const html = readFileSync(require.resolve('../index.html'), 'utf8');
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
-function browser({ incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
+function browser({ hostname = 'localhost', incomplete = false, fail = false, storage = new Map(), checkResponse, checkError, networkFailure = false } = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -33,7 +33,7 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     setItem: (key, value) => storage.set(key, String(value)),
     removeItem: key => storage.delete(key),
   };
-  const context = vm.createContext({ Pi, localStorage, document: { getElementById: element, createElement: () => ({}) },
+  const context = vm.createContext({ Pi, localStorage, window: { location: { hostname } }, document: { getElementById: element, createElement: () => ({}) },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
       if (url.endsWith('/api/check')) {
@@ -44,7 +44,7 @@ function browser({ incomplete = false, fail = false, storage = new Map(), checkR
     },
   });
   vm.runInContext(source, context);
-  return { element, calls, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
+  return { element, calls, selectApiBase: context.selectApiBase, get callbacks() { return callbacks; }, get paymentData() { return paymentData; }, get init() { return init; } };
 }
 
 test('frontend queues incomplete payment until the token is available', async () => {
@@ -53,7 +53,7 @@ test('frontend queues incomplete payment until the token is available', async ()
   assert.equal(b.init.sandbox, true);
   assert.equal(b.init.version, '2.0');
   assert.equal(b.calls.length, 1);
-  assert.equal(b.calls[0].url, 'https://node-health-report.vercel.app/api/payments/resume');
+  assert.equal(b.calls[0].url, 'https://node-health-report-testnet.vercel.app/api/payments/resume');
   assert.equal(b.calls[0].headers.Authorization, 'Bearer fixture-access-token');
   assert.equal(b.element('report').hidden, false);
   assert.match(b.element('payment-status').children.at(-1).textContent, /completed/);
@@ -69,9 +69,9 @@ test('frontend wires both U2A callbacks and payout to the absolute backend', asy
   await b.callbacks.onReadyForServerCompletion('fixture-payment', 'fixture-tx');
   await b.element('payout').click();
   assert.deepEqual(b.calls.map(c => c.url), [
-    'https://node-health-report.vercel.app/api/payments/approve',
-    'https://node-health-report.vercel.app/api/payments/complete',
-    'https://node-health-report.vercel.app/api/payout',
+    'https://node-health-report-testnet.vercel.app/api/payments/approve',
+    'https://node-health-report-testnet.vercel.app/api/payments/complete',
+    'https://node-health-report-testnet.vercel.app/api/payout',
   ]);
   for (const call of b.calls) assert.equal(call.headers.Authorization, 'Bearer fixture-access-token');
   assert.deepEqual(JSON.parse(b.calls[1].body), { paymentId: 'fixture-payment', txid: 'fixture-tx' });
@@ -138,7 +138,7 @@ test('frontend reveals check after payment, renders results and restores saved h
   assert.equal(b.element('run-panel').hidden, false);
   await runCheck(b);
   const call = b.calls.at(-1);
-  assert.equal(call.url, 'https://node-health-report.vercel.app/api/check');
+  assert.equal(call.url, 'https://node-health-report-testnet.vercel.app/api/check');
   assert.equal(call.headers.Authorization, 'Bearer fixture-access-token');
   assert.deepEqual(JSON.parse(call.body), { host: 'example.com', nodeLedger: 100, paymentId: 'fixture-payment' });
   assert.equal(b.element('check-node').textContent, checkReport.sections.status.line);
@@ -203,3 +203,18 @@ test('frontend purchase and payout buttons describe their existing status lines'
   }
   assert.match(html, /<p id="latest-status"/);
 });
+
+
+for (const hostname of ['nodehealthreport3739.pinet.com', 'testjra7998.pinet.com', 'localhost',
+  'node-health-report.vercel.app', 'knowaguy4u-cell.github.io']) {
+  test(`frontend selects the backend for ${hostname}`, async () => {
+    const b = browser({ hostname });
+    const expected = hostname === 'nodehealthreport3739.pinet.com'
+      ? 'https://node-health-report.vercel.app'
+      : 'https://node-health-report-testnet.vercel.app';
+    assert.equal(b.selectApiBase(hostname), expected);
+    await b.element('signin').click();
+    await b.element('payout').click();
+    assert.equal(b.calls[0].url, expected + '/api/payout');
+  });
+}

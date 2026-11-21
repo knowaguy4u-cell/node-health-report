@@ -99,7 +99,14 @@
 <footer>Built by TMT Productions for the Pi Next hackathon.</footer>
 
 <script>
-  const API_BASE = "https://node-health-report.vercel.app";
+  function selectApiBase(hostname) {
+    // Pi Browser loads Production through its pinet address; the sandbox and
+    // all other surfaces are Testnet.
+    return hostname === 'nodehealthreport3739.pinet.com'
+      ? 'https://node-health-report.vercel.app'
+      : 'https://node-health-report-testnet.vercel.app';
+  }
+  const API_BASE = selectApiBase(window.location.hostname);
   // Testnet app: sandbox mode stays on until a Production app exists.
   Pi.init({ version: "2.0", sandbox: true });
 
