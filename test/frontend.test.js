@@ -428,3 +428,33 @@ test('null protocol renders an em dash and hides the network note', () => {
   assert.match(b.element('network-observation').textContent, /PROTOCOL —/);
   assert.equal(b.element('network-note').hidden, true);
 });
+
+test('empty fleet offers an honest starting point and clears it when a node is added', async () => {
+  const b = browser();
+  const empty = b.element('fleet-list').children[0];
+  assert.equal(empty.className, 'empty-state');
+  assert.equal(empty.children[0].textContent, 'Your fleet starts here');
+  assert.match(empty.children[1].textContent, /on this device/);
+  assert.equal(b.element('check-all').disabled, true);
+  b.element('node-host').value = 'new.example';
+  b.element('own-node').checked = true;
+  await b.element('add-node').click();
+  assert.equal(b.element('fleet-list').children.length, 1);
+  assert.equal(b.element('fleet-list').children[0].className, 'fleet-entry');
+  assert.equal(b.element('check-all').disabled, false);
+});
+
+test('queue presentation retains observed stats and explains the real wait', async () => {
+  const report = observed('example.com', '2026-11-20T12:00:00Z', 80);
+  const b = browser({ checkError: 'check_too_frequent', storage: new Map([
+    ['nhr:fleet', JSON.stringify([{ host: report.host, label: 'Home' }])],
+    ['nhr:history', JSON.stringify([report])],
+  ]) });
+  fakeClock(b);
+  await evaluate(b, 'checkNode(fleet[0])');
+  const entry = b.element('fleet-list').children[0];
+  assert.equal(entry.children[0].children[1].textContent, 'CHECK QUEUED');
+  assert.equal(entry.children[2].children[1].children[1].textContent, '80');
+  const note = entry.children.find(child => child.className === 'hint queue-note');
+  assert.match(note.textContent, /Queue position 1 — about 1 minute. Keep this page open./);
+});
